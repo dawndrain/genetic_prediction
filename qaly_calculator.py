@@ -44,6 +44,8 @@ class DiseaseTrait:
     # What fraction of phenotypic variance the PGS explains (R² or similar)
     # Used to scale z-scores on the liability scale
     pgs_r2: float
+    # Typical age of onset (used for discounting)
+    typical_onset_age: float = 50.0
     # Sources / notes for the above numbers
     sources: str = ""
 
@@ -58,6 +60,9 @@ class ContinuousTrait:
     # Savings per 1 SD increase (positive = good: earnings, avoided costs)
     savings_per_sd: float
     pgs_r2: float
+    # Age at which the QALY/savings effects are centered (for discounting).
+    # For traits with lifelong effects (cognition, height), use a midlife value.
+    typical_effect_age: float = 40.0
     sources: str = ""
 
 
@@ -74,6 +79,7 @@ DISEASE_TRAITS = {
         qaly_loss_if_affected=3.0, # ~3 QALYs lost on average (acute event + chronic HF)
         lifetime_cost_if_affected=250_000,  # US lifetime cost estimate
         pgs_r2=0.04,              # typical PGS R² for CAD
+        typical_onset_age=60,
         sources="Framingham lifetime risk; GBD 2019; Dunbar-Rees 2018",
     ),
     "type2_diabetes": DiseaseTrait(
@@ -83,6 +89,7 @@ DISEASE_TRAITS = {
         qaly_loss_if_affected=5.0, # chronic condition, ~5 QALYs over remaining life
         lifetime_cost_if_affected=200_000,  # ADA lifetime cost estimates
         pgs_r2=0.03,
+        typical_onset_age=55,
         sources="CDC lifetime risk; Zhuo 2013 ADA cost; Sullivan 2020 QALY",
     ),
     "alzheimers": DiseaseTrait(
@@ -91,8 +98,9 @@ DISEASE_TRAITS = {
         prevalence=0.10,           # ~10% lifetime risk (age 65+)
         qaly_loss_if_affected=6.0, # severe quality-of-life impact
         lifetime_cost_if_affected=350_000,  # Alzheimer's Association 2023
-        pgs_r2=0.03,
-        sources="Alzheimer's Association 2023; GBD DALY estimates",
+        pgs_r2=0.07,              # APOE e4 dominates; GenoBoost AUROC 0.83 (Ohta 2024, N=67K)
+        typical_onset_age=75,
+        sources="Alzheimer's Association 2023; GBD DALY estimates; Ohta 2024 Nat Commun",
     ),
     "schizophrenia": DiseaseTrait(
         name="schizophrenia",
@@ -101,6 +109,7 @@ DISEASE_TRAITS = {
         qaly_loss_if_affected=15.0,  # early onset, chronic, severe
         lifetime_cost_if_affected=1_500_000,  # lifetime societal cost
         pgs_r2=0.05,              # PGS relatively predictive for SCZ
+        typical_onset_age=22,
         sources="McGrath 2008 epidemiology; Chong 2016 cost; Millier 2014 QALY",
     ),
     "depression": DiseaseTrait(
@@ -110,6 +119,7 @@ DISEASE_TRAITS = {
         qaly_loss_if_affected=3.0, # episodic but recurrent
         lifetime_cost_if_affected=100_000,
         pgs_r2=0.02,
+        typical_onset_age=30,
         sources="Kessler 2005 NCS-R; Greenberg 2021 cost; Saarni 2007 QALY",
     ),
     "atrial_fibrillation": DiseaseTrait(
@@ -119,6 +129,7 @@ DISEASE_TRAITS = {
         qaly_loss_if_affected=1.5, # chronic but manageable; moderate utility decrement
         lifetime_cost_if_affected=150_000,
         pgs_r2=0.04,              # Roselli 2018; SNP h² ~0.22
+        typical_onset_age=65,
         sources="Lloyd-Jones 2004 Framingham; Roselli 2018 AF GWAS; Kim 2011 AF cost",
     ),
     "breast_cancer": DiseaseTrait(
@@ -128,6 +139,7 @@ DISEASE_TRAITS = {
         qaly_loss_if_affected=3.0,
         lifetime_cost_if_affected=150_000,
         pgs_r2=0.08,              # Mavaddat 2019 PRS313; one of best cancer PGS
+        typical_onset_age=55,
         sources="SEER lifetime risk; Mavaddat 2019 AJHG PRS313; Campbell 2019 cost",
     ),
     "prostate_cancer": DiseaseTrait(
@@ -137,6 +149,7 @@ DISEASE_TRAITS = {
         qaly_loss_if_affected=2.0, # many low-grade; treatment side effects
         lifetime_cost_if_affected=120_000,
         pgs_r2=0.07,              # Conti 2021 PRS269
+        typical_onset_age=65,
         sources="SEER lifetime risk; Conti 2021 Nature Genetics; Wilson 2007 cost",
     ),
     "stroke": DiseaseTrait(
@@ -146,6 +159,7 @@ DISEASE_TRAITS = {
         qaly_loss_if_affected=4.0, # acute mortality ~15% + severe disability
         lifetime_cost_if_affected=200_000,
         pgs_r2=0.015,             # Mishra 2022 MEGASTROKE; heterogeneous subtypes
+        typical_onset_age=65,
         sources="Seshadri 2006 Framingham; Mishra 2022; Taylor 1996 cost updated",
     ),
     "colorectal_cancer": DiseaseTrait(
@@ -155,6 +169,7 @@ DISEASE_TRAITS = {
         qaly_loss_if_affected=3.5,
         lifetime_cost_if_affected=180_000,
         pgs_r2=0.03,              # Huyghe 2019, Thomas 2023
+        typical_onset_age=60,
         sources="SEER lifetime risk; Huyghe 2019 Nat Genet; Mariotto 2011 cost",
     ),
     "bipolar_disorder": DiseaseTrait(
@@ -164,6 +179,7 @@ DISEASE_TRAITS = {
         qaly_loss_if_affected=12.0,  # early onset, chronic, ~15yr life expectancy reduction
         lifetime_cost_if_affected=600_000,
         pgs_r2=0.04,              # PGC3 Mullins 2021
+        typical_onset_age=25,
         sources="Merikangas 2007 NCS-R; PGC3 Mullins 2021; Dilsaver 2003 cost",
     ),
     "chronic_kidney_disease": DiseaseTrait(
@@ -173,6 +189,7 @@ DISEASE_TRAITS = {
         qaly_loss_if_affected=2.0,
         lifetime_cost_if_affected=150_000,
         pgs_r2=0.02,              # Khan 2022 Nat Commun
+        typical_onset_age=60,
         sources="USRDS 2023; Khan 2022 Nat Commun; Honeycutt 2003 CKD cost",
     ),
     "asthma": DiseaseTrait(
@@ -182,6 +199,7 @@ DISEASE_TRAITS = {
         qaly_loss_if_affected=1.0, # mostly mild-moderate
         lifetime_cost_if_affected=50_000,
         pgs_r2=0.02,              # Shrine 2023
+        typical_onset_age=10,
         sources="CDC asthma prevalence; Shrine 2023; Nurmagambetov 2018 cost",
     ),
     "inflammatory_bowel_disease": DiseaseTrait(
@@ -190,7 +208,8 @@ DISEASE_TRAITS = {
         prevalence=0.008,          # ~0.5% Crohn's + ~0.3% UC
         qaly_loss_if_affected=4.0, # chronic, relapsing; surgery common
         lifetime_cost_if_affected=400_000,  # biologics ~$30-50k/yr
-        pgs_r2=0.04,              # de Lange 2017; Khera 2018 GPS
+        pgs_r2=0.05,              # Strong known loci (NOD2, IL23R); snpnet AUROC 0.90 (Tanigawa 2022) but inflated
+        typical_onset_age=30,
         sources="Ng 2017 Lancet; de Lange 2017 Nat Genet; Park 2020 IBD cost",
     ),
     "adhd": DiseaseTrait(
@@ -200,6 +219,7 @@ DISEASE_TRAITS = {
         qaly_loss_if_affected=4.0, # academic failure, accidents, substance abuse, relationships
         lifetime_cost_if_affected=300_000,  # Doshi 2012; treatment + lost productivity
         pgs_r2=0.04,              # Demontis 2023 PGC; R² ~3-5% liability
+        typical_onset_age=8,
         sources="Demontis 2023 Nat Genet; Doshi 2012 JAACAP cost; Daley 2015 QALY",
     ),
     "type1_diabetes": DiseaseTrait(
@@ -208,7 +228,8 @@ DISEASE_TRAITS = {
         prevalence=0.005,          # ~0.5% lifetime; onset usually childhood/adolescence
         qaly_loss_if_affected=10.0, # lifelong insulin dependence, complications, reduced lifespan
         lifetime_cost_if_affected=1_000_000,  # insulin + CGM + complications; Tao 2010
-        pgs_r2=0.06,              # Sharp 2019; HLA-dominated but genome-wide score adds
+        pgs_r2=0.12,              # HLA-dominated; Sharp 2019 AUROC 0.96 with 85 SNPs. Genetics-only ~0.10-0.15
+        typical_onset_age=12,
         sources="Maahs 2010 epidemiology; Sharp 2019 Diabetes Care; Tao 2010 cost",
     ),
     "osteoporosis": DiseaseTrait(
@@ -218,6 +239,7 @@ DISEASE_TRAITS = {
         qaly_loss_if_affected=2.0, # hip fracture → high mortality + disability; vertebral less severe
         lifetime_cost_if_affected=100_000,  # Burge 2007; hip fracture ~$40k acute + long-term care
         pgs_r2=0.05,              # Morris 2019 BMD GWAS; PGS for BMD, used as proxy for fracture
+        typical_onset_age=70,
         sources="Morris 2019 Nat Genet; Burge 2007 cost; Peasgood 2009 QALY",
     ),
     "anxiety_disorders": DiseaseTrait(
@@ -227,6 +249,7 @@ DISEASE_TRAITS = {
         qaly_loss_if_affected=2.0, # chronic, moderate disability; less severe than MDD on average
         lifetime_cost_if_affected=60_000,
         pgs_r2=0.01,              # Purves 2020; very low R², limited GWAS power
+        typical_onset_age=20,
         sources="Bandelow 2015 epidemiology; Purves 2020 Nat Genet; Konnopka 2009 cost",
     ),
 }
@@ -248,6 +271,7 @@ CONTINUOUS_TRAITS = {
         # PGS Catalog reports R²=0.717 for PGS001229 but that includes
         # sex/age covariates in snpnet. Genetics-only R² is ~0.16.
         pgs_r2=0.16,
+        typical_effect_age=30,
         sources="Judge & Cable 2004 earnings; NCD-RisC 2016; PGS001229 Tanigawa 2022",
     ),
     "cognitive_ability": ContinuousTrait(
@@ -260,9 +284,12 @@ CONTINUOUS_TRAITS = {
         # Lifetime earnings difference per SD of cognitive ability is large.
         # Conservative estimate: ~$100k-300k lifetime.
         savings_per_sd=200_000,
-        # PGS001232 reports R²=0.127 on UKB fluid intelligence
-        pgs_r2=0.127,
-        sources="Gottfredson 2004; Batty 2007 IQ-mortality; Zagorsky 2007; PGS001232 Tanigawa 2022",
+        # PGS001232 reports R²=0.127 on UKB fluid intelligence but that's the
+        # full model (PGS + age + sex + PCs). Incremental R² (genetics-only) is
+        # 0.050 in white British, 0.028 in non-British European. Using ~0.05.
+        pgs_r2=0.05,
+        typical_effect_age=35,
+        sources="Gottfredson 2004; Batty 2007 IQ-mortality; Zagorsky 2007; PGS001232 Tanigawa 2022 (incremental R²)",
     ),
     "bmi": ContinuousTrait(
         name="bmi",
@@ -276,6 +303,7 @@ CONTINUOUS_TRAITS = {
         # Similarly reduce cost to direct-only (not through diseases in model)
         savings_per_sd=-6_000,
         pgs_r2=0.08,             # Privé 2022 LDpred2; Khera 2019 ~5-7%
+        typical_effect_age=50,
         sources="Gou 2025 Nat Med; Dixon 2021 MR BMI-QALY; Cawley 2012 obesity cost; Privé 2022",
     ),
     "income": ContinuousTrait(
@@ -293,6 +321,7 @@ CONTINUOUS_TRAITS = {
         savings_per_sd=12_000,
         # PGS R² for income is low — most variance is environmental.
         pgs_r2=0.03,            # Hill 2019; Howe 2022 within-family R² even lower
+        typical_effect_age=40,
         sources="Hill 2019 Nat Commun income GWAS; Howe 2022 Science within-family",
     ),
     "longevity_residual": ContinuousTrait(
@@ -315,6 +344,7 @@ CONTINUOUS_TRAITS = {
         qaly_per_sd=7.0,
         savings_per_sd=0,
         pgs_r2=0.01,
+        typical_effect_age=75,
         sources="Timmers 2019 eLife; Deelen 2019; residual after regressing on trait PGS",
     ),
     "subjective_wellbeing": ContinuousTrait(
@@ -328,6 +358,7 @@ CONTINUOUS_TRAITS = {
         savings_per_sd=0,        # no clear cost pathway
         # PGS prediction is very weak — R² ~1-2% at best.
         pgs_r2=0.02,            # Okbay 2016; Baselmans 2019
+        typical_effect_age=40,
         sources="Okbay 2016 Nat Genet; Baselmans 2019; Clark 2018 wellbeing valuation",
     ),
 }
@@ -460,6 +491,60 @@ def build_genetic_correlation_matrix() -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
+# Discounting
+# ---------------------------------------------------------------------------
+
+# US Social Security period life table (2020), simplified.
+# P(surviving to age X | alive at birth). Used to discount by mortality.
+_SURVIVAL_TABLE = {
+    0: 1.000, 5: 0.994, 10: 0.993, 15: 0.992, 20: 0.990,
+    25: 0.987, 30: 0.984, 35: 0.980, 40: 0.975, 45: 0.967,
+    50: 0.955, 55: 0.936, 60: 0.906, 65: 0.862, 70: 0.798,
+    75: 0.706, 80: 0.581, 85: 0.424, 90: 0.255, 95: 0.108,
+}
+
+def survival_probability(age: float) -> float:
+    """Interpolate survival probability to a given age."""
+    ages = sorted(_SURVIVAL_TABLE.keys())
+    if age <= ages[0]:
+        return 1.0
+    if age >= ages[-1]:
+        return _SURVIVAL_TABLE[ages[-1]]
+    for i in range(len(ages) - 1):
+        if ages[i] <= age <= ages[i + 1]:
+            t = (age - ages[i]) / (ages[i + 1] - ages[i])
+            return _SURVIVAL_TABLE[ages[i]] * (1 - t) + _SURVIVAL_TABLE[ages[i + 1]] * t
+    return 0.0
+
+
+def discount_factor(age: float, pure_discount_rate: float = 0.0,
+                    use_survival: bool = True) -> float:
+    """Compute discount factor for a health/cost effect at a given age.
+
+    Combines:
+      - Pure time discount: 1/(1+r)^age  (time preference, uncertainty)
+      - Survival probability: P(alive at age) (might not live long enough)
+
+    Args:
+        age: Age at which the effect occurs.
+        pure_discount_rate: Annual pure time preference rate (e.g. 0.01 = 1%).
+            Recommended: 0-1% for embryo selection context. Standard health
+            economics uses 3%, but that answers a different question (resource
+            allocation with a fixed budget today).
+        use_survival: Whether to apply survival curve discounting.
+
+    Returns:
+        Multiplicative factor in [0, 1] to apply to undiscounted QALYs/costs.
+    """
+    factor = 1.0
+    if pure_discount_rate > 0:
+        factor *= 1.0 / (1 + pure_discount_rate) ** age
+    if use_survival:
+        factor *= survival_probability(age)
+    return factor
+
+
+# ---------------------------------------------------------------------------
 # Core calculation
 # ---------------------------------------------------------------------------
 
@@ -494,16 +579,20 @@ def liability_threshold_risk(pgs_z: float, prevalence: float, pgs_r2: float) -> 
     return risk
 
 
-def compute_disease_impact(pgs_z: float, trait: DiseaseTrait) -> dict:
+def compute_disease_impact(pgs_z: float, trait: DiseaseTrait,
+                           pure_discount_rate: float = 0.0,
+                           use_survival: bool = False) -> dict:
     """Compute QALY and savings impact for a disease trait given a PGS z-score."""
     baseline_risk = trait.prevalence
     individual_risk = liability_threshold_risk(pgs_z, trait.prevalence, trait.pgs_r2)
 
     risk_difference = individual_risk - baseline_risk
 
+    df = discount_factor(trait.typical_onset_age, pure_discount_rate, use_survival)
+
     # Positive = good: lower risk means positive QALY and savings
-    qaly_delta = -risk_difference * trait.qaly_loss_if_affected
-    savings = -risk_difference * trait.lifetime_cost_if_affected
+    qaly_delta = -risk_difference * trait.qaly_loss_if_affected * df
+    savings = -risk_difference * trait.lifetime_cost_if_affected * df
 
     return {
         "trait": trait.display_name,
@@ -514,16 +603,21 @@ def compute_disease_impact(pgs_z: float, trait: DiseaseTrait) -> dict:
         "risk_difference": risk_difference,
         "qaly_delta": qaly_delta,
         "savings": savings,
+        "discount_factor": df,
     }
 
 
-def compute_continuous_impact(pgs_z: float, trait: ContinuousTrait) -> dict:
+def compute_continuous_impact(pgs_z: float, trait: ContinuousTrait,
+                              pure_discount_rate: float = 0.0,
+                              use_survival: bool = False) -> dict:
     """Compute QALY and savings impact for a continuous trait given a PGS z-score."""
     # The PGS z-score in PGS units translates to sqrt(r2) SDs of the trait
     trait_sd_shift = pgs_z * (trait.pgs_r2 ** 0.5)
 
-    qaly_delta = trait_sd_shift * trait.qaly_per_sd
-    savings = trait_sd_shift * trait.savings_per_sd
+    df = discount_factor(trait.typical_effect_age, pure_discount_rate, use_survival)
+
+    qaly_delta = trait_sd_shift * trait.qaly_per_sd * df
+    savings = trait_sd_shift * trait.savings_per_sd * df
 
     return {
         "trait": trait.display_name,
@@ -532,14 +626,19 @@ def compute_continuous_impact(pgs_z: float, trait: ContinuousTrait) -> dict:
         "trait_sd_shift": trait_sd_shift,
         "qaly_delta": qaly_delta,
         "savings": savings,
+        "discount_factor": df,
     }
 
 
-def compute_all(scores: dict[str, float]) -> dict:
+def compute_all(scores: dict[str, float],
+                pure_discount_rate: float = 0.0,
+                use_survival: bool = False) -> dict:
     """Compute QALY and cost impact for all provided trait scores.
 
     Args:
         scores: mapping of trait name -> PGS z-score
+        pure_discount_rate: annual time discount rate (0 = no discounting)
+        use_survival: whether to discount by survival probability
 
     Returns:
         Dict with per-trait results and totals.
@@ -548,9 +647,13 @@ def compute_all(scores: dict[str, float]) -> dict:
 
     for trait_name, pgs_z in scores.items():
         if trait_name in DISEASE_TRAITS:
-            results.append(compute_disease_impact(pgs_z, DISEASE_TRAITS[trait_name]))
+            results.append(compute_disease_impact(
+                pgs_z, DISEASE_TRAITS[trait_name],
+                pure_discount_rate, use_survival))
         elif trait_name in CONTINUOUS_TRAITS:
-            results.append(compute_continuous_impact(pgs_z, CONTINUOUS_TRAITS[trait_name]))
+            results.append(compute_continuous_impact(
+                pgs_z, CONTINUOUS_TRAITS[trait_name],
+                pure_discount_rate, use_survival))
         else:
             print(f"Warning: unknown trait '{trait_name}', skipping")
 
@@ -633,6 +736,8 @@ def simulate_embryo_selection(
     use_correlations: bool = True,
     exclude: list[str] | None = None,
     only: list[str] | None = None,
+    pure_discount_rate: float = 0.0,
+    use_survival: bool = False,
 ) -> dict:
     """Simulate selecting the best embryo from n siblings by total QALY.
 
@@ -693,16 +798,18 @@ def simulate_embryo_selection(
 
         if trait_name in DISEASE_TRAITS:
             trait = DISEASE_TRAITS[trait_name]
+            df = discount_factor(trait.typical_onset_age, pure_discount_rate, use_survival)
             threshold = norm.ppf(1 - trait.prevalence)
             liability_shift = z * (trait.pgs_r2 ** 0.5)
             residual_sd = (1 - trait.pgs_r2) ** 0.5
             risk = 1 - norm.cdf((threshold - liability_shift) / residual_sd)
             risk_diff = risk - trait.prevalence
-            qaly_contrib = -risk_diff * trait.qaly_loss_if_affected
+            qaly_contrib = -risk_diff * trait.qaly_loss_if_affected * df
         else:
             trait = CONTINUOUS_TRAITS[trait_name]
+            df = discount_factor(trait.typical_effect_age, pure_discount_rate, use_survival)
             trait_sd_shift = z * (trait.pgs_r2 ** 0.5)
-            qaly_contrib = trait_sd_shift * trait.qaly_per_sd
+            qaly_contrib = trait_sd_shift * trait.qaly_per_sd * df
 
         qaly_matrix += qaly_contrib
 
@@ -719,14 +826,16 @@ def simulate_embryo_selection(
         z = pgs_draws[:, :, t_idx]
         if trait_name in DISEASE_TRAITS:
             trait = DISEASE_TRAITS[trait_name]
+            df = discount_factor(trait.typical_onset_age, pure_discount_rate, use_survival)
             threshold = norm.ppf(1 - trait.prevalence)
             liability_shift = z * (trait.pgs_r2 ** 0.5)
             residual_sd = (1 - trait.pgs_r2) ** 0.5
             risk = 1 - norm.cdf((threshold - liability_shift) / residual_sd)
             risk_diff = risk - trait.prevalence
-            savings_contrib = -risk_diff * trait.lifetime_cost_if_affected
+            savings_contrib = -risk_diff * trait.lifetime_cost_if_affected * df
         else:
             trait = CONTINUOUS_TRAITS[trait_name]
+            df = discount_factor(trait.typical_effect_age, pure_discount_rate, use_survival)
             trait_sd_shift = z * (trait.pgs_r2 ** 0.5)
             savings_contrib = trait_sd_shift * trait.savings_per_sd
         savings_matrix += savings_contrib
@@ -754,6 +863,7 @@ def simulate_embryo_selection(
 
         if trait_name in DISEASE_TRAITS:
             trait = DISEASE_TRAITS[trait_name]
+            df = discount_factor(trait.typical_onset_age, pure_discount_rate, use_survival)
             # For diseases, lower PGS = lower risk = better, so select min
             best_solo_idx = np.argmin(trait_z, axis=1)
             selected_z = trait_z[np.arange(n_simulations), best_solo_idx]
@@ -763,10 +873,11 @@ def simulate_embryo_selection(
             residual_sd_val = (1 - trait.pgs_r2) ** 0.5
             risk = 1 - norm.cdf((threshold - liability_shift) / residual_sd_val)
             risk_diff = risk - trait.prevalence
-            solo_qaly = float(np.mean(-risk_diff * trait.qaly_loss_if_affected))
-            solo_savings = float(np.mean(-risk_diff * trait.lifetime_cost_if_affected))
+            solo_qaly = float(np.mean(-risk_diff * trait.qaly_loss_if_affected * df))
+            solo_savings = float(np.mean(-risk_diff * trait.lifetime_cost_if_affected * df))
         else:
             trait = CONTINUOUS_TRAITS[trait_name]
+            df = discount_factor(trait.typical_effect_age, pure_discount_rate, use_survival)
             # Direction depends on sign of qaly_per_sd (e.g. BMI: lower is better)
             if trait.qaly_per_sd >= 0:
                 best_solo_idx = np.argmax(trait_z, axis=1)
@@ -775,8 +886,8 @@ def simulate_embryo_selection(
             selected_z = trait_z[np.arange(n_simulations), best_solo_idx]
 
             trait_sd_shift = selected_z * (trait.pgs_r2 ** 0.5)
-            solo_qaly = float(np.mean(trait_sd_shift * trait.qaly_per_sd))
-            solo_savings = float(np.mean(trait_sd_shift * trait.savings_per_sd))
+            solo_qaly = float(np.mean(trait_sd_shift * trait.qaly_per_sd * df))
+            solo_savings = float(np.mean(trait_sd_shift * trait.savings_per_sd * df))
 
         per_trait_solo[trait_name] = {
             "mean_selected_z": float(np.mean(selected_z)),
@@ -788,6 +899,8 @@ def simulate_embryo_selection(
         "n_embryos": n_embryos,
         "n_simulations": n_simulations,
         "use_correlations": use_correlations,
+        "pure_discount_rate": pure_discount_rate,
+        "use_survival": use_survival,
         "qaly_gain_mean": float(np.mean(gain)),
         "qaly_gain_median": float(np.median(gain)),
         "qaly_gain_p10": float(np.percentile(gain, 10)),
@@ -803,9 +916,15 @@ def format_embryo_results(results: dict) -> str:
     """Format embryo selection simulation results."""
     lines = []
     corr_label = "with genetic correlations" if results.get("use_correlations", False) else "independent traits"
+    discount_parts = []
+    if results.get("pure_discount_rate", 0) > 0:
+        discount_parts.append(f"{results['pure_discount_rate']:.0%}/yr time discount")
+    if results.get("use_survival", False):
+        discount_parts.append("survival-adjusted")
+    discount_label = ", ".join(discount_parts) if discount_parts else "no discounting"
     lines.append("=" * 72)
     lines.append(f"EMBRYO SELECTION: Best of {results['n_embryos']} siblings")
-    lines.append(f"({results['n_simulations']:,} simulations, {corr_label})")
+    lines.append(f"({results['n_simulations']:,} simulations, {corr_label}, {discount_label})")
     lines.append("=" * 72)
     lines.append("")
     lines.append("COMBINED SELECTION (pick embryo with best total QALY):")
@@ -890,6 +1009,14 @@ def main():
         "--only", nargs="+", metavar="TRAIT",
         help="Only include these traits in embryo simulation"
     )
+    parser.add_argument(
+        "--discount", type=float, default=0.0, metavar="RATE",
+        help="Pure time discount rate per year (e.g. 0.01 = 1%%). Default: 0 (no discounting)"
+    )
+    parser.add_argument(
+        "--survival", action="store_true",
+        help="Also discount by probability of surviving to age of onset"
+    )
     args = parser.parse_args()
 
     if args.list_traits:
@@ -909,6 +1036,8 @@ def main():
             use_correlations=not args.no_correlations,
             exclude=args.exclude,
             only=args.only,
+            pure_discount_rate=args.discount,
+            use_survival=args.survival,
         )
         print(format_embryo_results(results))
         return
