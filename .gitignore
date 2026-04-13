@@ -1,0 +1,27 @@
+# Genomic data (large)
+data/genomes/
+data/genomes_b37/
+data/vcf/
+data/vcf_merged/
+data/vcf_batch/
+data/imputed/
+data/imputed_slim/
+data/michigan/
+data/michigan_results/
+reference_genomes_vcf/
+reference_genomes_vcf_slim/
+
+# Beagle and other large resources
+resources/beagle.jar
+resources/*.map
+resources/*.zip
+resources/fasta/
+resources/tmp*
+
+# Temp files
+data/tmp*
+output/
+
+# Python
+__pycache__/
+*.pyc

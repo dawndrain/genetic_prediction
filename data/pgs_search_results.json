@@ -1,0 +1,481 @@
+{
+  "height": [
+    {
+      "pgs_id": "PGS000758",
+      "name": "LASSO_Height",
+      "variants_number": 33938,
+      "method": "LASSO performed on P+T candidate SNPs",
+      "publication": "Lu T (2021)",
+      "doi": "10.1210/clinem/dgab215",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS000758/ScoringFiles/PGS000758.txt.gz",
+      "best_metric": {
+        "metric_type": "AUROC",
+        "value": 0.861,
+        "sample_size": 941,
+        "cohort": "ALSPAC"
+      }
+    },
+    {
+      "pgs_id": "PGS003895",
+      "name": "INI50",
+      "variants_number": 62419,
+      "method": "snpnet",
+      "publication": "Tanigawa Y (2023)",
+      "doi": "10.1016/j.ajhg.2023.09.013",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS003895/ScoringFiles/PGS003895.txt.gz",
+      "best_metric": {
+        "metric_type": "R\u00b2",
+        "value": 0.72848,
+        "sample_size": 2885,
+        "cohort": "UKB"
+      }
+    },
+    {
+      "pgs_id": "PGS001229",
+      "name": "GBE_INI50",
+      "variants_number": 51209,
+      "method": "snpnet",
+      "publication": "Tanigawa Y (2022)",
+      "doi": "10.1371/journal.pgen.1010105",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS001229/ScoringFiles/PGS001229.txt.gz",
+      "best_metric": {
+        "metric_type": "R\u00b2",
+        "value": 0.71726,
+        "sample_size": 67298,
+        "cohort": "UKB"
+      }
+    },
+    {
+      "pgs_id": "PGS004212",
+      "name": "height_2",
+      "variants_number": 27779,
+      "method": "LASSO",
+      "publication": "Raben TG (2023)",
+      "doi": "10.1038/s41598-023-37580-5",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS004212/ScoringFiles/PGS004212.txt.gz",
+      "best_metric": {
+        "metric_type": "R\u00b2",
+        "value": 0.7124153382089999,
+        "sample_size": 45334,
+        "cohort": "UKB"
+      }
+    },
+    {
+      "pgs_id": "PGS004214",
+      "name": "height_4",
+      "variants_number": 23686,
+      "method": "LASSO",
+      "publication": "Raben TG (2023)",
+      "doi": "10.1038/s41598-023-37580-5",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS004214/ScoringFiles/PGS004214.txt.gz",
+      "best_metric": {
+        "metric_type": "R\u00b2",
+        "value": 0.7124153382089999,
+        "sample_size": 45334,
+        "cohort": "UKB"
+      }
+    }
+  ],
+  "heart_disease": [
+    {
+      "pgs_id": "PGS000013",
+      "name": "GPS_CAD",
+      "variants_number": 6630150,
+      "method": "LDpred",
+      "publication": "Khera AV (2018)",
+      "doi": "10.1038/s41588-018-0183-z",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS000013/ScoringFiles/PGS000013.txt.gz",
+      "best_metric": {
+        "metric_type": "AUROC",
+        "value": 0.921,
+        "sample_size": 90053,
+        "cohort": "MGI"
+      }
+    },
+    {
+      "pgs_id": "PGS001780",
+      "name": "CHD_PRSCS",
+      "variants_number": 1090048,
+      "method": "PRS-CS",
+      "publication": "Tamlander M (2022)",
+      "doi": "10.1038/s42003-021-02996-0",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS001780/ScoringFiles/PGS001780.txt.gz",
+      "best_metric": {
+        "metric_type": "AUROC",
+        "value": 0.913,
+        "sample_size": 291720,
+        "cohort": "FinnGen"
+      }
+    },
+    {
+      "pgs_id": "PGS000018",
+      "name": "metaGRS_CAD",
+      "variants_number": 1745179,
+      "method": "metaGRS",
+      "publication": "Inouye M (2018)",
+      "doi": "10.1016/j.jacc.2018.07.079",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS000018/ScoringFiles/PGS000018.txt.gz",
+      "best_metric": {
+        "metric_type": "AUROC",
+        "value": 0.89,
+        "sample_size": 3309,
+        "cohort": "MHI"
+      }
+    },
+    {
+      "pgs_id": "PGS000200",
+      "name": "GRS28",
+      "variants_number": 28,
+      "method": "Genome-wide significant variants",
+      "publication": "Tikkanen E (2013)",
+      "doi": "10.1161/atvbaha.112.301120",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS000200/ScoringFiles/PGS000200.txt.gz",
+      "best_metric": {
+        "metric_type": "C-index",
+        "value": 0.859,
+        "sample_size": 24124,
+        "cohort": "FINRISK"
+      }
+    },
+    {
+      "pgs_id": "PGS000329",
+      "name": "PRS_CHD",
+      "variants_number": 6423165,
+      "method": "LDpred",
+      "publication": "Mars N (2020)",
+      "doi": "10.1038/s41591-020-0800-0",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS000329/ScoringFiles/PGS000329.txt.gz",
+      "best_metric": {
+        "metric_type": "C-index",
+        "value": 0.832,
+        "sample_size": 20165,
+        "cohort": "FINRISK"
+      }
+    }
+  ],
+  "type2_diabetes": [
+    {
+      "pgs_id": "PGS000031",
+      "name": "GRSt",
+      "variants_number": 62,
+      "method": "Genome-wide significant variants",
+      "publication": "Vassy JL (2014)",
+      "doi": "10.2337/db13-1663",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS000031/ScoringFiles/PGS000031.txt.gz",
+      "best_metric": {
+        "metric_type": "C-index",
+        "value": 0.906,
+        "sample_size": 3471,
+        "cohort": "FOS"
+      }
+    },
+    {
+      "pgs_id": "PGS004859",
+      "name": "T2D_PRS_CS",
+      "variants_number": 1108235,
+      "method": "PRS-CS",
+      "publication": "Deutsch AJ (2023)",
+      "doi": "10.2337/dc23-0353",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS004859/ScoringFiles/PGS004859.txt.gz",
+      "best_metric": {
+        "metric_type": "AUROC",
+        "value": 0.88,
+        "sample_size": 323,
+        "cohort": "AllofUs"
+      }
+    },
+    {
+      "pgs_id": "PGS000014",
+      "name": "GPS_T2D",
+      "variants_number": 6917436,
+      "method": "LDpred",
+      "publication": "Khera AV (2018)",
+      "doi": "10.1038/s41588-018-0183-z",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS000014/ScoringFiles/PGS000014.txt.gz",
+      "best_metric": {
+        "metric_type": "C-index",
+        "value": 0.869,
+        "sample_size": 68229,
+        "cohort": "UKB"
+      }
+    },
+    {
+      "pgs_id": "PGS005363",
+      "name": "DPRISM_T2DPRS_trainedforEAS_AFRweights",
+      "variants_number": 946015,
+      "method": "PRS-CSx",
+      "publication": "Huerta-Chagoya A (2025)",
+      "doi": "10.1101/2025.07.21.25331778",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS005363/ScoringFiles/PGS005363.txt.gz",
+      "best_metric": {
+        "metric_type": "AUROC",
+        "value": 0.859999905863304,
+        "sample_size": 1660,
+        "cohort": "SP2"
+      }
+    },
+    {
+      "pgs_id": "PGS005364",
+      "name": "DPRISM_T2DPRS_trainedforEAS_AMRweights",
+      "variants_number": 980079,
+      "method": "PRS-CSx",
+      "publication": "Huerta-Chagoya A (2025)",
+      "doi": "10.1101/2025.07.21.25331778",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS005364/ScoringFiles/PGS005364.txt.gz",
+      "best_metric": {
+        "metric_type": "AUROC",
+        "value": 0.859999905863304,
+        "sample_size": 1660,
+        "cohort": "SP2"
+      }
+    }
+  ],
+  "alzheimers": [
+    {
+      "pgs_id": "PGS000945",
+      "name": "GBE_HC710",
+      "variants_number": 26,
+      "method": "snpnet",
+      "publication": "Tanigawa Y (2022)",
+      "doi": "10.1371/journal.pgen.1010105",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS000945/ScoringFiles/PGS000945.txt.gz",
+      "best_metric": {
+        "metric_type": "AUROC",
+        "value": 0.98515,
+        "sample_size": 6497,
+        "cohort": "UKB"
+      }
+    },
+    {
+      "pgs_id": "PGS001348",
+      "name": "GBE_HC1584",
+      "variants_number": 15,
+      "method": "snpnet",
+      "publication": "Tanigawa Y (2022)",
+      "doi": "10.1371/journal.pgen.1010105",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS001348/ScoringFiles/PGS001348.txt.gz",
+      "best_metric": {
+        "metric_type": "AUROC",
+        "value": 0.96694,
+        "sample_size": 6497,
+        "cohort": "UKB"
+      }
+    },
+    {
+      "pgs_id": "PGS001349",
+      "name": "GBE_HC807",
+      "variants_number": 6,
+      "method": "snpnet",
+      "publication": "Tanigawa Y (2022)",
+      "doi": "10.1371/journal.pgen.1010105",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS001349/ScoringFiles/PGS001349.txt.gz",
+      "best_metric": {
+        "metric_type": "AUROC",
+        "value": 0.96248,
+        "sample_size": 6497,
+        "cohort": "UKB"
+      }
+    },
+    {
+      "pgs_id": "PGS004285",
+      "name": "GenoBoost_alzheimer_s_disease_0",
+      "variants_number": 20,
+      "method": "GenoBoost",
+      "publication": "Ohta R (2024)",
+      "doi": "10.1038/s41467-024-48654-x",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS004285/ScoringFiles/PGS004285.txt.gz",
+      "best_metric": {
+        "metric_type": "AUROC",
+        "value": 0.833604804388662,
+        "sample_size": 67428,
+        "cohort": "UKB"
+      }
+    },
+    {
+      "pgs_id": "PGS004286",
+      "name": "GenoBoost_alzheimer_s_disease_1",
+      "variants_number": 10,
+      "method": "GenoBoost",
+      "publication": "Ohta R (2024)",
+      "doi": "10.1038/s41467-024-48654-x",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS004286/ScoringFiles/PGS004286.txt.gz",
+      "best_metric": {
+        "metric_type": "AUROC",
+        "value": 0.832096831751059,
+        "sample_size": 67428,
+        "cohort": "UKB"
+      }
+    }
+  ],
+  "schizophrenia": [
+    {
+      "pgs_id": "PGS000135",
+      "name": "SCZ_MTS",
+      "variants_number": 972439,
+      "method": "PRS-CS",
+      "publication": "Zheutlin AB (2019)",
+      "doi": "10.1176/appi.ajp.2019.18091085",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS000135/ScoringFiles/PGS000135.txt.gz",
+      "best_metric": {
+        "metric_type": "AUROC",
+        "value": 0.74,
+        "sample_size": 9569,
+        "cohort": "BioMe"
+      }
+    },
+    {
+      "pgs_id": "PGS000136",
+      "name": "SCZ_PBK",
+      "variants_number": 833502,
+      "method": "PRS-CS",
+      "publication": "Zheutlin AB (2019)",
+      "doi": "10.1176/appi.ajp.2019.18091085",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS000136/ScoringFiles/PGS000136.txt.gz",
+      "best_metric": {
+        "metric_type": "AUROC",
+        "value": 0.64,
+        "sample_size": 18461,
+        "cohort": "PHB"
+      }
+    },
+    {
+      "pgs_id": "PGS000133",
+      "name": "SCZ_BVU",
+      "variants_number": 604645,
+      "method": "PRS-CS",
+      "publication": "Zheutlin AB (2019)",
+      "doi": "10.1176/appi.ajp.2019.18091085",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS000133/ScoringFiles/PGS000133.txt.gz",
+      "best_metric": {
+        "metric_type": "AUROC",
+        "value": 0.6,
+        "sample_size": 33694,
+        "cohort": "BioVU"
+      }
+    },
+    {
+      "pgs_id": "PGS000134",
+      "name": "SCZ_GHS",
+      "variants_number": 830589,
+      "method": "PRS-CS",
+      "publication": "Zheutlin AB (2019)",
+      "doi": "10.1176/appi.ajp.2019.18091085",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS000134/ScoringFiles/PGS000134.txt.gz",
+      "best_metric": {
+        "metric_type": "AUROC",
+        "value": 0.6,
+        "sample_size": 44436,
+        "cohort": "MyCode"
+      }
+    }
+  ],
+  "depression": [
+    {
+      "pgs_id": "PGS004885",
+      "name": "INTERVENE_MegaPRS_MDD",
+      "variants_number": 801544,
+      "method": "megaprs.auto",
+      "publication": "Jermy B (2024)",
+      "doi": "10.1038/s41467-024-48938-2",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS004885/ScoringFiles/PGS004885.txt.gz",
+      "best_metric": {
+        "metric_type": "C-index",
+        "value": 0.62,
+        "sample_size": 7018,
+        "cohort": "GS:SFHS"
+      }
+    },
+    {
+      "pgs_id": "PGS000138",
+      "name": "LifetimeMDD",
+      "variants_number": 22274,
+      "method": "LD-clumping and  p-value thresholding (Ricopilli)",
+      "publication": "Cai N (2020)",
+      "doi": "10.1038/s41588-020-0594-5",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS000138/ScoringFiles/PGS000138.txt.gz",
+      "best_metric": {
+        "metric_type": "AUROC",
+        "value": 0.5611035,
+        "sample_size": 36709,
+        "cohort": "TwinGene"
+      }
+    },
+    {
+      "pgs_id": "PGS000139",
+      "name": "MDDRecur",
+      "variants_number": 21980,
+      "method": "LD-clumping and  p-value thresholding (Ricopilli)",
+      "publication": "Cai N (2020)",
+      "doi": "10.1038/s41588-020-0594-5",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS000139/ScoringFiles/PGS000139.txt.gz",
+      "best_metric": {
+        "metric_type": "AUROC",
+        "value": 0.5487412,
+        "sample_size": 36709,
+        "cohort": "TwinGene"
+      }
+    },
+    {
+      "pgs_id": "PGS000145",
+      "name": "ICD10Dep",
+      "variants_number": 21510,
+      "method": "LD-clumping and  p-value thresholding (Ricopilli)",
+      "publication": "Cai N (2020)",
+      "doi": "10.1038/s41588-020-0594-5",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS000145/ScoringFiles/PGS000145.txt.gz",
+      "best_metric": {
+        "metric_type": "AUROC",
+        "value": 0.5251015,
+        "sample_size": 36709,
+        "cohort": "TwinGene"
+      }
+    },
+    {
+      "pgs_id": "PGS000767",
+      "name": "GRS14",
+      "variants_number": 14,
+      "method": "Genome-wide significant variants",
+      "publication": "Guffanti G (2019)",
+      "doi": "10.1038/s41398-019-0566-7",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS000767/ScoringFiles/PGS000767.txt.gz",
+      "best_metric": {
+        "metric_type": "R\u00b2",
+        "value": 0.095,
+        "sample_size": 73,
+        "cohort": ""
+      }
+    }
+  ],
+  "cognitive_ability": [
+    {
+      "pgs_id": "PGS001232",
+      "name": "GBE_INI20016",
+      "variants_number": 10055,
+      "method": "snpnet",
+      "publication": "Tanigawa Y (2022)",
+      "doi": "10.1371/journal.pgen.1010105",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS001232/ScoringFiles/PGS001232.txt.gz",
+      "best_metric": {
+        "metric_type": "R\u00b2",
+        "value": 0.12663,
+        "sample_size": 10867,
+        "cohort": "UKB"
+      }
+    },
+    {
+      "pgs_id": "PGS003724",
+      "name": "IQ",
+      "variants_number": 6683248,
+      "method": "SBLUP",
+      "publication": "Hatoum AS (2022)",
+      "doi": "10.1016/j.biopsych.2022.06.034",
+      "ftp_scoring_file": "https://ftp.ebi.ac.uk/pub/databases/spot/pgs/scores/PGS003724/ScoringFiles/PGS003724.txt.gz",
+      "best_metric": {
+        "metric_type": "R\u00b2",
+        "value": 0.121,
+        "sample_size": 916,
+        "cohort": "COL_Twin"
+      }
+    }
+  ]
+}
