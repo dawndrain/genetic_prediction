@@ -401,12 +401,19 @@ def verify(score: Score, path: Path) -> bool:
     return h.get("trait_reported", "") == score.trait_reported
 
 
-def download(pgs_id: str, dest_dir: Path | None = None) -> Path:
-    """Fetch a harmonized PGS Catalog scoring file. Idempotent."""
+RELEASE = (
+    "https://github.com/dawndrain/genetic_prediction/releases/download/"
+    "v0.1.0/{pgs}_hmPOS_GRCh38.txt.gz"
+)
+
+
+def download(pgs_id: str, dest_dir: Path | None = None, *, local: bool = False) -> Path:
+    """Fetch a harmonized scoring file — from PGS Catalog for `PGS*` IDs,
+    or from this repo's GitHub release for homemade SBayesRC weights."""
     dest = weight_path(pgs_id, dest_dir)
     if dest.exists() and dest.stat().st_size > 1000:
         return dest
-    url = PGS_FTP.format(pgs=pgs_id)
+    url = (RELEASE if local else PGS_FTP).format(pgs=pgs_id)
     req = Request(url, headers={"User-Agent": "genepred/0.1"})
     tmp = dest.with_suffix(".part")
     with urlopen(req, timeout=120) as resp, open(tmp, "wb") as out:
@@ -428,14 +435,20 @@ def ensure_weights(
     for trait, score in todo.items():
         path = weight_path(score.pgs_id, dest_dir)
         if not (path.exists() and path.stat().st_size > 1000):
-            if score.local:
-                if verbose:
-                    print(f"  {trait} ({score.pgs_id}): local build — run "
-                          f"reference/build_*_sbayesrc.sh", flush=True)
-                continue
             if verbose:
-                print(f"  fetching {score.pgs_id} ({trait}) ...")
-            download(score.pgs_id, dest_dir)
+                src = "release" if score.local else "PGS Catalog"
+                print(f"  fetching {score.pgs_id} ({trait}) from {src} ...")
+            try:
+                download(score.pgs_id, dest_dir, local=score.local)
+            except Exception as e:
+                if score.local:
+                    if verbose:
+                        print(
+                            f"    release fetch failed ({e}); rebuild via "
+                            f"reference/weights/build_*_sbayesrc.sh"
+                        )
+                    continue
+                raise
             n_ann = _annotate_rsids(path)
             if n_ann > 0 and verbose:
                 print(f"    backfilled {n_ann:,} rsIDs")

@@ -16,7 +16,7 @@ narrow-sense h² is the relevant bound.)
 Also dumps the current per-trait QALY-loss / cost / discounting
 parameters so they can be reviewed.
 
-Output: text summary + data/r2_scaling_report.html
+Output: text summary + docs/r2_scaling_report.html
 """
 
 import colorsys
@@ -217,7 +217,7 @@ def _aggregate_value_table(results, scenarios):
     )
 
 
-def write_html(results, n_embryos_list, out_path="data/r2_scaling_report.html"):
+def write_html(results, n_embryos_list, out_path="docs/r2_scaling_report.html"):
     scenarios = list(results)
     colors = ["#888", "#4a90d9", "#2ca02c", "#d62728"]
 

@@ -156,7 +156,7 @@ def _qaly_report(embryo_scores, pgs_ids):
     _write_html(detail, qaly_per_emb, best, n_emb, q)
 
 
-def _write_html(detail, qaly_per_emb, best, n_emb, q, out="data/embryo_report.html"):
+def _write_html(detail, qaly_per_emb, best, n_emb, q, out="docs/embryo_report.html"):
     # Sort by expected selection impact: SD of ΔQALY across embryos.
     # A trait with high QALY-spread is one where embryo choice matters most.
     detail = sorted(detail, key=lambda d: -float(np.std(d[4])))

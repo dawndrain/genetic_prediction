@@ -34,11 +34,13 @@ gains from embryo selection.
 3. **Estimate embryo-selection value** — Monte Carlo over ~20 traits
    with their genetic correlation matrix, mapping PGS shifts to QALYs
    and cost via a liability-threshold + cited-utility model. See the
-   [predictor-scaling report](data/r2_scaling_report.html).
+   [predictor-scaling report](https://htmlpreview.github.io/?https://github.com/dawndrain/genetic_prediction/blob/main/docs/r2_scaling_report.html)
+   ([source](docs/r2_scaling_report.html)).
 
 4. **End-to-end embryo demo** — phased 1KG parents → simulated meiosis
    → PGT-A biopsy at ~0.05× → HMM haplotype recovery → score → rank.
-   Output: [embryo report](data/embryo_report.html).
+   Output: [embryo report](https://htmlpreview.github.io/?https://github.com/dawndrain/genetic_prediction/blob/main/docs/embryo_report.html)
+   ([source](docs/embryo_report.html)).
 
 ## Why not just use X?
 
