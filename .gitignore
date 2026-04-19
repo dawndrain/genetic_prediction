@@ -1,4 +1,5 @@
 # Genomic data (large)
+data
 data/genomes/
 data/genomes_b37/
 data/vcf/
@@ -17,11 +18,22 @@ resources/*.map
 resources/*.zip
 resources/fasta/
 resources/tmp*
+tools
 
 # Temp files
 data/tmp*
 output/
 
+# Nextflow (run_pgsc_calc.sh)
+work/
+.nextflow/
+.nextflow.log
+
 # Python
 __pycache__/
 *.pyc
+*.egg-info/
+build/
+dist/
+.michigan_token
+.nextflow.log*
