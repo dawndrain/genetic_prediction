@@ -43,6 +43,7 @@ H2 = {
     "height": (0.48, 0.80, 0.90),
     "bmi": (0.25, 0.65, 0.78),
     "cognitive_ability": (0.20, 0.65, 0.78),
+    "educational_attainment": (0.13, 0.40, 0.50),
     "income": (0.05, 0.25, 0.40),
     "subjective_wellbeing": (0.05, 0.32, 0.38),
     # No validated longevity PGS exists in the pipeline, and most

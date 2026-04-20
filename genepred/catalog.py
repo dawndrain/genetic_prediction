@@ -51,13 +51,17 @@ CURATED: dict[str, Score] = {
         n_train=5_400_000, consortium="GIANT + 23andMe",
     ),
     "bmi": Score(
-        "PGS004735",
+        "PGS002313",
         "Body mass index (BMI)",
-        "Truong B et al. Cell Genom (2024). doi:10.1016/j.xgen.2024.100523",
-        "hg38",
-        4_536_322,
-        0.161,
-        n_train=700_000, consortium="PRSmix+ (multi-source)",
+        "Weissbrod O et al. Nat Genet (2022). doi:10.1038/s41588-022-01036-9",
+        "GRCh37",
+        1_109_311,
+        0.12,
+        # PGS004735 (PRSmix+, 4.5M variants) reports R²≈0.16 but has ~0%
+        # overlap with un-imputed DTC arrays. This HM3-based score gets
+        # ~60% overlap on a raw 23andMe file, so it's the better default;
+        # use PGS004735 only on imputed input.
+        n_train=700_000, consortium="GIANT + UKB (PolyPred-S)",
     ),
     "heart_disease": Score(
         "PGS003725",
@@ -284,6 +288,19 @@ CURATED: dict[str, Score] = {
         1_059_939,
         0.10,
         n_train=260_000, consortium="UKB fluid intelligence",
+    ),
+    "educational_attainment": Score(
+        "EA4_sbayesrc",
+        "Educational attainment (years of schooling)",
+        "Okbay A et al. Nat Genet (2022). doi:10.1038/s41588-022-01016-z",
+        "GRCh37",
+        1_154_522,
+        0.13,
+        # SBayesRC on EA4 excl-23andMe public release. Full EA4 (with
+        # 23andMe, ~3M individuals) achieves R²≈0.16 but those weights
+        # aren't public. SSGAC's published EA4 PGS (PGS002245) is
+        # similar to this but uses LDpred; ours uses SBayesRC.
+        n_train=765_283, consortium="SSGAC EA4 (in-house SBayesRC)", local=True,
     ),
 }
 

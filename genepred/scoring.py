@@ -22,15 +22,20 @@ This is what makes raw, un-imputed DTC files give usable z-scores.
 
 from __future__ import annotations
 
+import multiprocessing as mp
+import os
 import sys
 from dataclasses import dataclass
 from math import erf, sqrt
 from pathlib import Path
 
+from tqdm import tqdm
+
 from genepred.catalog import CURATED, list_weight_files
 from genepred.io import COMPLEMENT, load_genotypes
 from genepred.paths import open_maybe_gz, resource
 from genepred.pca import assign_population, load_pca, project
+from genepred.qaly import ANCESTRY_R2_RATIO
 
 
 @dataclass
@@ -182,6 +187,15 @@ def score_one(by_rs, by_pos, pgs_path, build: str = "GRCh37") -> dict:
     )
 
 
+_GENOME: tuple | None = None  # (by_rs, by_pos, build) — fork-shared
+
+
+def _score_worker(item):
+    pgs_id, wf = item
+    by_rs, by_pos, build = _GENOME  # type: ignore[misc]
+    return score_one(by_rs, by_pos, wf, build)
+
+
 # ------------------------------------------------------------- normalization
 
 
@@ -258,6 +272,7 @@ def score_genome(
     ref_pop: str | None = None,
     weights_dir: Path | None = None,
     verbose: bool = False,
+    n_jobs: int | None = None,
 ) -> tuple[list[ScoreResult], dict]:
     """Score a genome against every available PGS weight file.
 
@@ -274,6 +289,14 @@ def score_genome(
     if verbose:
         print(
             f"  {len(by_pos):,} called SNPs ({len(by_rs):,} with rsID)", file=sys.stderr
+        )
+
+    if len(by_pos) < 10_000:
+        raise ValueError(
+            f"Only {len(by_pos):,} SNPs loaded — expected ≥100k for a "
+            f"DTC array file. Either the file isn't a 23andMe/Ancestry/"
+            f"VCF genotype export, or the format wasn't recognized "
+            f"(check delimiter, header, encoding)."
         )
 
     pcs = None
@@ -300,9 +323,39 @@ def score_genome(
 
     pgs_to_trait = {s.pgs_id: trait for trait, s in CURATED.items()}
     results = []
-    for pgs_id, wf in list_weight_files(weights_dir):
+    weight_files = list(list_weight_files(weights_dir))
+
+    # Parallelize over weight files. Fork-based so the genome dicts
+    # (~1M keys each) are inherited copy-on-write rather than pickled.
+    n_workers = min(
+        len(weight_files),
+        max(1, n_jobs if n_jobs is not None else (os.cpu_count() or 4)),
+    )
+    global _GENOME
+    _GENOME = (by_rs, by_pos, build)
+    if n_workers > 1 and sys.platform != "win32":
+        ctx = mp.get_context("fork")
+        with ctx.Pool(n_workers) as pool:
+            it = pool.imap(_score_worker, weight_files)
+            if verbose:
+                it = tqdm(
+                    it, total=len(weight_files), desc="  scoring", unit="pgs",
+                    file=sys.stderr,
+                    bar_format="{desc}: {n_fmt}/{total_fmt} {bar} {elapsed}",
+                )
+            scored = list(it)
+    else:
+        it = weight_files
+        if verbose:
+            it = tqdm(
+                it, desc="  scoring", unit="pgs", file=sys.stderr,
+                bar_format="{desc}: {n_fmt}/{total_fmt} {bar} {elapsed}",
+            )
+        scored = [_score_worker(w) for w in it]
+    _GENOME = None
+
+    for (pgs_id, wf), r in zip(weight_files, scored):
         trait = pgs_to_trait.get(pgs_id, pgs_id)
-        r = score_one(by_rs, by_pos, wf, build)
         z, pct, method = _normalize(
             pgs_id, r, pcs=pcs, pca_model=pca_model, ref_pop_stats=ref_stats,
             trait=trait,
@@ -328,18 +381,46 @@ def score_genome(
     return results, meta
 
 
+def _trait_pct(z: float, r2: float) -> tuple[float, float, float]:
+    """(point, lo95, hi95) trait-percentile given PGS z and predictor R²."""
+    shift = z * sqrt(max(0.0, r2))
+    sd = sqrt(max(0.0, 1 - r2))
+    cdf = lambda x: 0.5 * (1 + erf(x / sqrt(2)))  # noqa: E731
+    return cdf(shift), cdf(shift - 1.96 * sd), cdf(shift + 1.96 * sd)
+
+
 def format_results(results: list[ScoreResult], meta: dict) -> str:
     pop = meta["super_pop"]
+    ratio = ANCESTRY_R2_RATIO.get(pop, 1.0)
+    r2_by_id = {s.pgs_id: s.r2_eur_pop * ratio for s in CURATED.values()}
+    tw = max(26, max((len(r.trait) for r in results), default=0))
+    pw = max(11, max((len(r.pgs_id) for r in results), default=0))
     out = [
-        f"{'trait':<26} {'pgs_id':<11} {'snps':>9} {'matched':>8} "
-        f"{'overlap':>8} {'z (' + pop + ')':>9} {'pctile':>7}",
-        "-" * 90,
+        f"{'trait':<{tw}} {'pgs_id':<{pw}} {'snps':>9} {'matched':>8} "
+        f"{'overlap':>8} {'z (' + pop + ')':>9} {'PGS pct':>8} "
+        f"{'R²':>6} {'trait pct [95% CI]':>20}",
+        "-" * (tw + pw + 80),
     ]
     for r in results:
         zstr = f"{r.z:+8.2f}" if r.z is not None else "    n/a"
         pstr = f"{r.percentile:6.1f}%" if r.percentile is not None else "   n/a"
+        r2 = r2_by_id.get(r.pgs_id)
+        if r.z is not None and r2 is not None:
+            tp, lo, hi = _trait_pct(r.z, r2)
+            tpstr = f"{r2:6.3f} {tp*100:5.0f}% [{lo*100:3.0f}–{hi*100:3.0f}]"
+        else:
+            tpstr = f"{'—':>6} {'—':>20}"
         out.append(
-            f"{r.trait:<26} {r.pgs_id:<11} {r.n_total:>9,} {r.n_matched:>8,} "
-            f"{r.overlap:>7.1%} {zstr:>9} {pstr:>7}"
+            f"{r.trait:<{tw}} {r.pgs_id:<{pw}} {r.n_total:>9,} {r.n_matched:>8,} "
+            f"{r.overlap:>7.1%} {zstr:>9} {pstr:>8} {tpstr}"
         )
+    out += [
+        "",
+        f"PGS pct  = where the score falls in the 1KG-{pop} score "
+        f"distribution.",
+        "trait pct = predicted trait percentile = Φ(z·√R²); brackets "
+        "are the 95% credible interval given the score's R².",
+        "         A wide interval means the predictor is weak — the "
+        "score barely constrains the trait.",
+    ]
     return "\n".join(out)
