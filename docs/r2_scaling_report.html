@@ -1,0 +1,209 @@
+<!doctype html><html><head><meta charset="utf-8">
+<title>Selection gain vs predictor strength</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; max-width: 1000px;
+          margin: 2em auto; color: #222; }
+  h1 { font-size: 1.5em; } h2 { font-size: 1.2em; margin-top: 2.2em; }
+  table { border-collapse: collapse; font-size: 12px; }
+  th, td { border: 1px solid #ddd; padding: 4px 8px; text-align: right; }
+  th { background: #f4f4f4; } td:first-child { text-align: left; }
+  .note { color: #555; font-size: 0.93em; max-width: 780px; }
+  .note b { color: #222; }
+</style></head><body>
+<h1>How much does embryo selection gain as polygenic predictors improve?</h1>
+
+<p class="note" style="background:#fff7e6;border-left:3px solid #e6a800;
+padding:0.6em 1em">
+<b>European-ancestry only.</b> Every R² figure here comes from
+predictors trained on and validated in European-ancestry samples.
+In other ancestries, current polygenic scores typically explain
+40–80% less variance (because the SNPs that tag causal variants in
+Europeans don't tag them as well where LD patterns differ). The
+"current PGS" line should be read as roughly 2–5× lower for African
+ancestry and 1.5–2× lower for East/South Asian ancestry. The
+heritability ceilings (SNP-h², twin h²) are more transferable since
+they reflect biology rather than predictor quality, but the
+estimates themselves are also mostly from European cohorts.
+</p>
+
+<p class="note">
+This report asks: if you have N embryos and pick the one with the
+best polygenic score profile, how much healthier (in expected
+quality-adjusted life-years) is that embryo than a randomly-chosen
+sibling? And how does that answer change as the predictors get
+better?
+</p>
+<p class="note">
+<b>Method.</b> For each scenario we simulate 50,000 random families.
+In each family we draw N sibling embryos whose polygenic scores are
+correlated the way real traits are genetically correlated (so an
+embryo with a high heart-disease score also tends to have a high
+type-2-diabetes score, etc.). We compute each embryo's expected QALY
+impact across all traits — for diseases, by converting the score to
+an absolute lifetime risk and multiplying by the QALY cost of getting
+that disease; for continuous traits like height, by a linear
+QALY-per-standard-deviation. We pick the embryo with the highest
+total, and record how much better it is than the average sibling.
+Future costs are weighted by the probability of surviving to the age
+they occur; no additional time-discounting is applied.
+</p>
+
+<h2>Expected QALY gain vs number of embryos</h2>
+<svg width="720" height="360"><line x1="60" y1="320" x2="700" y2="320" stroke="#333"/><line x1="60" y1="20" x2="60" y2="320" stroke="#333"/><text x="60" y="345" text-anchor="middle" font-size="12">2</text><text x="273" y="345" text-anchor="middle" font-size="12">3</text><text x="487" y="345" text-anchor="middle" font-size="12">5</text><text x="700" y="345" text-anchor="middle" font-size="12">10</text><text x="52" y="320" text-anchor="end" font-size="11" dy="4">0.0</text><line x1="60" y1="320" x2="700" y2="320" stroke="#eee"/><text x="52" y="245" text-anchor="end" font-size="11" dy="4">0.6</text><line x1="60" y1="245" x2="700" y2="245" stroke="#eee"/><text x="52" y="170" text-anchor="end" font-size="11" dy="4">1.3</text><line x1="60" y1="170" x2="700" y2="170" stroke="#eee"/><text x="52" y="95" text-anchor="end" font-size="11" dy="4">1.9</text><line x1="60" y1="95" x2="700" y2="95" stroke="#eee"/><text x="52" y="20" text-anchor="end" font-size="11" dy="4">2.6</text><line x1="60" y1="20" x2="700" y2="20" stroke="#eee"/><polyline points="60,293 273,280 487,265 700,248" fill="none" stroke="#888" stroke-width="2.5"/><circle cx="60" cy="293" r="3" fill="#888"/><circle cx="273" cy="280" r="3" fill="#888"/><circle cx="487" cy="265" r="3" fill="#888"/><circle cx="700" cy="248" r="3" fill="#888"/><text x="705" y="248" fill="#888" font-size="11" text-anchor="end" dy="4">current PGS</text><polyline points="60,259 273,229 487,198 700,162" fill="none" stroke="#4a90d9" stroke-width="2.5"/><circle cx="60" cy="259" r="3" fill="#4a90d9"/><circle cx="273" cy="229" r="3" fill="#4a90d9"/><circle cx="487" cy="198" r="3" fill="#4a90d9"/><circle cx="700" cy="162" r="3" fill="#4a90d9"/><text x="705" y="162" fill="#4a90d9" font-size="11" text-anchor="end" dy="4">SNP-h² ceiling</text><polyline points="60,206 273,155 487,102 700,44" fill="none" stroke="#2ca02c" stroke-width="2.5"/><circle cx="60" cy="206" r="3" fill="#2ca02c"/><circle cx="273" cy="155" r="3" fill="#2ca02c"/><circle cx="487" cy="102" r="3" fill="#2ca02c"/><circle cx="700" cy="44" r="3" fill="#2ca02c"/><text x="705" y="44" fill="#2ca02c" font-size="11" text-anchor="end" dy="4">twin h² (additive ceiling)</text><polyline points="60,192 273,136 487,80 700,20" fill="none" stroke="#d62728" stroke-width="2.5"/><circle cx="60" cy="192" r="3" fill="#d62728"/><circle cx="273" cy="136" r="3" fill="#d62728"/><circle cx="487" cy="80" r="3" fill="#d62728"/><circle cx="700" cy="20" r="3" fill="#d62728"/><text x="705" y="20" fill="#d62728" font-size="11" text-anchor="end" dy="4">MZ correlation (H², for ref)</text><text x="380.0" y="358" text-anchor="middle" font-size="12">Number of embryos</text><text x="15" y="170.0" text-anchor="middle" font-size="12" transform="rotate(-90 15 170.0)">Expected ΔQALY (best-of-N vs sib mean)</text></svg>
+<p class="note">
+The four lines are different assumptions about how good the
+predictors are:
+</p>
+<ul class="note">
+<li><b>Current PGS</b> — what today's published polygenic scores
+actually achieve, after the within-family discount (scores predict
+less well between siblings than between strangers, because some of
+their population-level signal is environmental confounding that
+siblings share).</li>
+<li><b>SNP-h² ceiling</b> — what you'd get from an infinitely large
+GWAS using today's common-variant SNP arrays. This is the limit of
+"more data, same technology."</li>
+<li><b>Twin h²</b> — the additive heritability from twin studies.
+This is the ceiling for <i>any</i> additive predictor, including ones
+that capture rare variants via whole-genome sequencing. It's the
+realistic long-run limit. <i>Caveat for psychiatric traits:</i>
+twin-study h² for schizophrenia, bipolar, ADHD, and autism is
+probably inflated — partly because identical twins share more
+environment than the model assumes, and partly because rare de novo
+mutations (which contribute a lot to these conditions) are fully
+shared by identical twins but not at all by fraternal twins, which
+the standard twin model misreads as extra heritability. The
+psychiatric segments under "twin h²" should be read as optimistic.</li>
+<li><b>MZ correlation</b> — how similar identical twins are. This
+includes non-additive genetic effects (dominance, gene-gene
+interactions) that a polygenic score can't exploit, so it overstates
+what selection could ever do. Shown only as an upper reference.</li>
+</ul>
+<p class="note">
+Reading the chart: today's predictors (grey line) deliver roughly a
+quarter of what's theoretically achievable (green line). The gap is
+mostly rare genetic variants that current GWAS don't capture.
+</p>
+
+<h2>Which traits drive the gain? (best-of-5)</h2>
+<svg width="980" height="420"><line x1="70" y1="370" x2="740" y2="370" stroke="#333"/><rect x="80" y="357" width="91" height="13" fill="#5f83dd" stroke="#fff" stroke-width="0.5"><title>Alzheimer's disease: 0.219 QALY</title></rect><rect x="80" y="345" width="91" height="12" fill="#7fbd28" stroke="#fff" stroke-width="0.5"><title>Type 2 diabetes: 0.195 QALY</title></rect><rect x="80" y="334" width="91" height="11" fill="#bd2828" stroke="#fff" stroke-width="0.5"><title>Coronary heart disease: 0.187 QALY</title></rect><rect x="80" y="326" width="91" height="8" fill="#28bda4" stroke="#fff" stroke-width="0.5"><title>BMI: 0.138 QALY</title></rect><rect x="80" y="320" width="91" height="6" fill="#dd5fcd" stroke="#fff" stroke-width="0.5"><title>Stroke: 0.107 QALY</title></rect><rect x="80" y="314" width="91" height="5" fill="#4d28bd" stroke="#fff" stroke-width="0.5"><title>Cognitive ability: 0.090 QALY</title></rect><rect x="80" y="310" width="91" height="5" fill="#64dd5f" stroke="#fff" stroke-width="0.5"><title>Atrial fibrillation: 0.077 QALY</title></rect><rect x="80" y="305" width="91" height="4" fill="#c25fdd" stroke="#fff" stroke-width="0.5"><title>Breast cancer: 0.072 QALY</title></rect><rect x="80" y="302" width="91" height="4" fill="#dda35f" stroke="#fff" stroke-width="0.5"><title>Major depressive disorder: 0.065 QALY</title></rect><rect x="80" y="298" width="91" height="3" fill="#2834bd" stroke="#fff" stroke-width="0.5"><title>Schizophrenia: 0.056 QALY</title></rect><rect x="80" y="295" width="91" height="3" fill="#b1bd28" stroke="#fff" stroke-width="0.5"><title>ADHD: 0.052 QALY</title></rect><rect x="80" y="292" width="91" height="3" fill="#8edd5f" stroke="#fff" stroke-width="0.5"><title>Prostate cancer: 0.050 QALY</title></rect><rect x="80" y="289" width="91" height="3" fill="#28bd72" stroke="#fff" stroke-width="0.5"><title>Osteoporosis: 0.048 QALY</title></rect><rect x="80" y="287" width="91" height="3" fill="#dd795f" stroke="#fff" stroke-width="0.5"><title>Bipolar disorder: 0.045 QALY</title></rect><rect x="80" y="284" width="91" height="3" fill="#5faddd" stroke="#fff" stroke-width="0.5"><title>Subjective wellbeing: 0.042 QALY</title></rect><rect x="80" y="282" width="91" height="2" fill="#bd288b" stroke="#fff" stroke-width="0.5"><title>Colorectal cancer: 0.041 QALY</title></rect><rect x="80" y="279" width="91" height="2" fill="#985fdd" stroke="#fff" stroke-width="0.5"><title>Type 1 diabetes: 0.038 QALY</title></rect><rect x="80" y="277" width="91" height="2" fill="#bd285a" stroke="#fff" stroke-width="0.5"><title>Anxiety disorders: 0.035 QALY</title></rect><rect x="80" y="276" width="91" height="2" fill="#5fd8dd" stroke="#fff" stroke-width="0.5"><title>Chronic kidney disease: 0.025 QALY</title></rect><rect x="80" y="275" width="91" height="1" fill="#bd9728" stroke="#fff" stroke-width="0.5"><title>Asthma: 0.022 QALY</title></rect><rect x="80" y="274" width="91" height="1" fill="#28bd40" stroke="#fff" stroke-width="0.5"><title>Inflammatory bowel disease: 0.016 QALY</title></rect><rect x="80" y="273" width="91" height="1" fill="#dd5f6f" stroke="#fff" stroke-width="0.5"><title>Height: 0.014 QALY</title></rect><rect x="80" y="273" width="91" height="0" fill="#2866bd" stroke="#fff" stroke-width="0.5"><title>Household income: 0.004 QALY</title></rect><line x1="72" y1="342" x2="179" y2="342" stroke="#000" stroke-width="2" stroke-dasharray="3,2"/><text x="181" y="342" font-size="10" dy="3">joint 0.47</text><text x="125" y="267" text-anchor="middle" font-size="10">Σsolo 1.64</text><text x="125" y="390" text-anchor="middle" font-size="10">current PGS</text><rect x="245" y="347" width="91" height="23" fill="#5f83dd" stroke="#fff" stroke-width="0.5"><title>Alzheimer's disease: 0.383 QALY</title></rect><text x="290" y="362" text-anchor="middle" font-size="9" fill="#fff" style="pointer-events:none">Alzheimer's di 0.38</text><rect x="245" y="327" width="91" height="21" fill="#7fbd28" stroke="#fff" stroke-width="0.5"><title>Type 2 diabetes: 0.346 QALY</title></rect><text x="290" y="340" text-anchor="middle" font-size="9" fill="#fff" style="pointer-events:none">Type 2 diabete 0.35</text><rect x="245" y="309" width="91" height="18" fill="#dd5fcd" stroke="#fff" stroke-width="0.5"><title>Stroke: 0.298 QALY</title></rect><text x="290" y="321" text-anchor="middle" font-size="9" fill="#fff" style="pointer-events:none">Stroke 0.30</text><rect x="245" y="293" width="91" height="16" fill="#bd2828" stroke="#fff" stroke-width="0.5"><title>Coronary heart disease: 0.273 QALY</title></rect><text x="290" y="304" text-anchor="middle" font-size="9" fill="#fff" style="pointer-events:none">Coronary heart 0.27</text><rect x="245" y="279" width="91" height="14" fill="#28bda4" stroke="#fff" stroke-width="0.5"><title>BMI: 0.235 QALY</title></rect><rect x="245" y="268" width="91" height="11" fill="#4d28bd" stroke="#fff" stroke-width="0.5"><title>Cognitive ability: 0.179 QALY</title></rect><rect x="245" y="258" width="91" height="10" fill="#dda35f" stroke="#fff" stroke-width="0.5"><title>Major depressive disorder: 0.170 QALY</title></rect><rect x="245" y="249" width="91" height="9" fill="#b1bd28" stroke="#fff" stroke-width="0.5"><title>ADHD: 0.148 QALY</title></rect><rect x="245" y="242" width="91" height="7" fill="#64dd5f" stroke="#fff" stroke-width="0.5"><title>Atrial fibrillation: 0.121 QALY</title></rect><rect x="245" y="236" width="91" height="6" fill="#c25fdd" stroke="#fff" stroke-width="0.5"><title>Breast cancer: 0.104 QALY</title></rect><rect x="245" y="230" width="91" height="6" fill="#bd285a" stroke="#fff" stroke-width="0.5"><title>Anxiety disorders: 0.103 QALY</title></rect><rect x="245" y="223" width="91" height="6" fill="#28bd72" stroke="#fff" stroke-width="0.5"><title>Osteoporosis: 0.102 QALY</title></rect><rect x="245" y="218" width="91" height="6" fill="#dd795f" stroke="#fff" stroke-width="0.5"><title>Bipolar disorder: 0.099 QALY</title></rect><rect x="245" y="212" width="91" height="6" fill="#2834bd" stroke="#fff" stroke-width="0.5"><title>Schizophrenia: 0.093 QALY</title></rect><rect x="245" y="207" width="91" height="5" fill="#5faddd" stroke="#fff" stroke-width="0.5"><title>Subjective wellbeing: 0.090 QALY</title></rect><rect x="245" y="202" width="91" height="5" fill="#8edd5f" stroke="#fff" stroke-width="0.5"><title>Prostate cancer: 0.077 QALY</title></rect><rect x="245" y="198" width="91" height="4" fill="#bd288b" stroke="#fff" stroke-width="0.5"><title>Colorectal cancer: 0.069 QALY</title></rect><rect x="245" y="195" width="91" height="3" fill="#5fd8dd" stroke="#fff" stroke-width="0.5"><title>Chronic kidney disease: 0.053 QALY</title></rect><rect x="245" y="192" width="91" height="3" fill="#985fdd" stroke="#fff" stroke-width="0.5"><title>Type 1 diabetes: 0.049 QALY</title></rect><rect x="245" y="189" width="91" height="2" fill="#bd9728" stroke="#fff" stroke-width="0.5"><title>Asthma: 0.042 QALY</title></rect><rect x="245" y="188" width="91" height="2" fill="#28bd40" stroke="#fff" stroke-width="0.5"><title>Inflammatory bowel disease: 0.029 QALY</title></rect><rect x="245" y="187" width="91" height="1" fill="#dd5f6f" stroke="#fff" stroke-width="0.5"><title>Height: 0.017 QALY</title></rect><rect x="245" y="186" width="91" height="1" fill="#2866bd" stroke="#fff" stroke-width="0.5"><title>Household income: 0.009 QALY</title></rect><line x1="237" y1="307" x2="344" y2="307" stroke="#000" stroke-width="2" stroke-dasharray="3,2"/><text x="346" y="307" font-size="10" dy="3">joint 1.05</text><text x="290" y="180" text-anchor="middle" font-size="10">Σsolo 3.09</text><text x="290" y="390" text-anchor="middle" font-size="10">SNP-h² ceiling</text><rect x="410" y="333" width="91" height="37" fill="#bd2828" stroke="#fff" stroke-width="0.5"><title>Coronary heart disease: 0.627 QALY</title></rect><text x="455" y="354" text-anchor="middle" font-size="9" fill="#fff" style="pointer-events:none">Coronary heart 0.63</text><rect x="410" y="298" width="91" height="35" fill="#5f83dd" stroke="#fff" stroke-width="0.5"><title>Alzheimer's disease: 0.585 QALY</title></rect><text x="455" y="318" text-anchor="middle" font-size="9" fill="#fff" style="pointer-events:none">Alzheimer's di 0.59</text><rect x="410" y="266" width="91" height="32" fill="#7fbd28" stroke="#fff" stroke-width="0.5"><title>Type 2 diabetes: 0.542 QALY</title></rect><text x="455" y="285" text-anchor="middle" font-size="9" fill="#fff" style="pointer-events:none">Type 2 diabete 0.54</text><rect x="410" y="235" width="91" height="31" fill="#dd5fcd" stroke="#fff" stroke-width="0.5"><title>Stroke: 0.518 QALY</title></rect><text x="455" y="253" text-anchor="middle" font-size="9" fill="#fff" style="pointer-events:none">Stroke 0.52</text><rect x="410" y="212" width="91" height="23" fill="#28bda4" stroke="#fff" stroke-width="0.5"><title>BMI: 0.379 QALY</title></rect><text x="455" y="226" text-anchor="middle" font-size="9" fill="#fff" style="pointer-events:none">BMI 0.38</text><rect x="410" y="191" width="91" height="21" fill="#dda35f" stroke="#fff" stroke-width="0.5"><title>Major depressive disorder: 0.361 QALY</title></rect><text x="455" y="204" text-anchor="middle" font-size="9" fill="#fff" style="pointer-events:none">Major depressi 0.36</text><rect x="410" y="171" width="91" height="19" fill="#4d28bd" stroke="#fff" stroke-width="0.5"><title>Cognitive ability: 0.324 QALY</title></rect><text x="455" y="184" text-anchor="middle" font-size="9" fill="#fff" style="pointer-events:none">Cognitive abil 0.32</text><rect x="410" y="156" width="91" height="16" fill="#bd285a" stroke="#fff" stroke-width="0.5"><title>Anxiety disorders: 0.266 QALY</title></rect><text x="455" y="167" text-anchor="middle" font-size="9" fill="#fff" style="pointer-events:none">Anxiety disord 0.27</text><rect x="410" y="141" width="91" height="14" fill="#64dd5f" stroke="#fff" stroke-width="0.5"><title>Atrial fibrillation: 0.241 QALY</title></rect><text x="455" y="151" text-anchor="middle" font-size="9" fill="#fff" style="pointer-events:none">Atrial fibrill 0.24</text><rect x="410" y="128" width="91" height="14" fill="#5faddd" stroke="#fff" stroke-width="0.5"><title>Subjective wellbeing: 0.227 QALY</title></rect><rect x="410" y="116" width="91" height="12" fill="#b1bd28" stroke="#fff" stroke-width="0.5"><title>ADHD: 0.198 QALY</title></rect><rect x="410" y="107" width="91" height="9" fill="#28bd72" stroke="#fff" stroke-width="0.5"><title>Osteoporosis: 0.150 QALY</title></rect><rect x="410" y="98" width="91" height="9" fill="#c25fdd" stroke="#fff" stroke-width="0.5"><title>Breast cancer: 0.148 QALY</title></rect><rect x="410" y="91" width="91" height="7" fill="#dd795f" stroke="#fff" stroke-width="0.5"><title>Bipolar disorder: 0.118 QALY</title></rect><rect x="410" y="85" width="91" height="6" fill="#bd288b" stroke="#fff" stroke-width="0.5"><title>Colorectal cancer: 0.108 QALY</title></rect><rect x="410" y="78" width="91" height="6" fill="#5fd8dd" stroke="#fff" stroke-width="0.5"><title>Chronic kidney disease: 0.108 QALY</title></rect><rect x="410" y="72" width="91" height="6" fill="#8edd5f" stroke="#fff" stroke-width="0.5"><title>Prostate cancer: 0.106 QALY</title></rect><rect x="410" y="66" width="91" height="6" fill="#2834bd" stroke="#fff" stroke-width="0.5"><title>Schizophrenia: 0.104 QALY</title></rect><rect x="410" y="61" width="91" height="5" fill="#bd9728" stroke="#fff" stroke-width="0.5"><title>Asthma: 0.077 QALY</title></rect><rect x="410" y="58" width="91" height="3" fill="#985fdd" stroke="#fff" stroke-width="0.5"><title>Type 1 diabetes: 0.050 QALY</title></rect><rect x="410" y="56" width="91" height="2" fill="#28bd40" stroke="#fff" stroke-width="0.5"><title>Inflammatory bowel disease: 0.031 QALY</title></rect><rect x="410" y="55" width="91" height="1" fill="#dd5f6f" stroke="#fff" stroke-width="0.5"><title>Height: 0.022 QALY</title></rect><rect x="410" y="54" width="91" height="1" fill="#2866bd" stroke="#fff" stroke-width="0.5"><title>Household income: 0.020 QALY</title></rect><line x1="402" y1="258" x2="509" y2="258" stroke="#000" stroke-width="2" stroke-dasharray="3,2"/><text x="511" y="258" font-size="10" dy="3">joint 1.88</text><text x="455" y="48" text-anchor="middle" font-size="10">Σsolo 5.31</text><text x="455" y="390" text-anchor="middle" font-size="10">twin h²</text><rect x="575" y="328" width="91" height="42" fill="#bd2828" stroke="#fff" stroke-width="0.5"><title>Coronary heart disease: 0.708 QALY</title></rect><text x="620" y="352" text-anchor="middle" font-size="9" fill="#fff" style="pointer-events:none">Coronary heart 0.71</text><rect x="575" y="292" width="91" height="36" fill="#5f83dd" stroke="#fff" stroke-width="0.5"><title>Alzheimer's disease: 0.597 QALY</title></rect><text x="620" y="313" text-anchor="middle" font-size="9" fill="#fff" style="pointer-events:none">Alzheimer's di 0.60</text><rect x="575" y="257" width="91" height="36" fill="#7fbd28" stroke="#fff" stroke-width="0.5"><title>Type 2 diabetes: 0.597 QALY</title></rect><text x="620" y="278" text-anchor="middle" font-size="9" fill="#fff" style="pointer-events:none">Type 2 diabete 0.60</text><rect x="575" y="223" width="91" height="34" fill="#dd5fcd" stroke="#fff" stroke-width="0.5"><title>Stroke: 0.567 QALY</title></rect><text x="620" y="243" text-anchor="middle" font-size="9" fill="#fff" style="pointer-events:none">Stroke 0.57</text><rect x="575" y="198" width="91" height="25" fill="#28bda4" stroke="#fff" stroke-width="0.5"><title>BMI: 0.415 QALY</title></rect><text x="620" y="214" text-anchor="middle" font-size="9" fill="#fff" style="pointer-events:none">BMI 0.41</text><rect x="575" y="176" width="91" height="23" fill="#dda35f" stroke="#fff" stroke-width="0.5"><title>Major depressive disorder: 0.381 QALY</title></rect><text x="620" y="190" text-anchor="middle" font-size="9" fill="#fff" style="pointer-events:none">Major depressi 0.38</text><rect x="575" y="155" width="91" height="21" fill="#4d28bd" stroke="#fff" stroke-width="0.5"><title>Cognitive ability: 0.354 QALY</title></rect><text x="620" y="168" text-anchor="middle" font-size="9" fill="#fff" style="pointer-events:none">Cognitive abil 0.35</text><rect x="575" y="137" width="91" height="17" fill="#bd285a" stroke="#fff" stroke-width="0.5"><title>Anxiety disorders: 0.290 QALY</title></rect><text x="620" y="149" text-anchor="middle" font-size="9" fill="#fff" style="pointer-events:none">Anxiety disord 0.29</text><rect x="575" y="121" width="91" height="17" fill="#64dd5f" stroke="#fff" stroke-width="0.5"><title>Atrial fibrillation: 0.282 QALY</title></rect><text x="620" y="132" text-anchor="middle" font-size="9" fill="#fff" style="pointer-events:none">Atrial fibrill 0.28</text><rect x="575" y="106" width="91" height="15" fill="#5faddd" stroke="#fff" stroke-width="0.5"><title>Subjective wellbeing: 0.247 QALY</title></rect><text x="620" y="116" text-anchor="middle" font-size="9" fill="#fff" style="pointer-events:none">Subjective wel 0.25</text><rect x="575" y="94" width="91" height="12" fill="#b1bd28" stroke="#fff" stroke-width="0.5"><title>ADHD: 0.199 QALY</title></rect><rect x="575" y="85" width="91" height="9" fill="#28bd72" stroke="#fff" stroke-width="0.5"><title>Osteoporosis: 0.157 QALY</title></rect><rect x="575" y="76" width="91" height="9" fill="#c25fdd" stroke="#fff" stroke-width="0.5"><title>Breast cancer: 0.148 QALY</title></rect><rect x="575" y="69" width="91" height="7" fill="#dd795f" stroke="#fff" stroke-width="0.5"><title>Bipolar disorder: 0.118 QALY</title></rect><rect x="575" y="62" width="91" height="7" fill="#5fd8dd" stroke="#fff" stroke-width="0.5"><title>Chronic kidney disease: 0.116 QALY</title></rect><rect x="575" y="55" width="91" height="7" fill="#bd288b" stroke="#fff" stroke-width="0.5"><title>Colorectal cancer: 0.113 QALY</title></rect><rect x="575" y="49" width="91" height="6" fill="#8edd5f" stroke="#fff" stroke-width="0.5"><title>Prostate cancer: 0.109 QALY</title></rect><rect x="575" y="42" width="91" height="6" fill="#2834bd" stroke="#fff" stroke-width="0.5"><title>Schizophrenia: 0.104 QALY</title></rect><rect x="575" y="38" width="91" height="5" fill="#bd9728" stroke="#fff" stroke-width="0.5"><title>Asthma: 0.079 QALY</title></rect><rect x="575" y="35" width="91" height="3" fill="#985fdd" stroke="#fff" stroke-width="0.5"><title>Type 1 diabetes: 0.050 QALY</title></rect><rect x="575" y="33" width="91" height="2" fill="#28bd40" stroke="#fff" stroke-width="0.5"><title>Inflammatory bowel disease: 0.031 QALY</title></rect><rect x="575" y="31" width="91" height="2" fill="#2866bd" stroke="#fff" stroke-width="0.5"><title>Household income: 0.025 QALY</title></rect><rect x="575" y="30" width="91" height="1" fill="#dd5f6f" stroke="#fff" stroke-width="0.5"><title>Height: 0.023 QALY</title></rect><line x1="567" y1="247" x2="674" y2="247" stroke="#000" stroke-width="2" stroke-dasharray="3,2"/><text x="676" y="247" font-size="10" dy="3">joint 2.07</text><text x="620" y="24" text-anchor="middle" font-size="10">Σsolo 5.71</text><text x="620" y="390" text-anchor="middle" font-size="10">MZ correlation</text><rect x="750" y="10" width="220" height="402" fill="#fafafa" stroke="#ddd"/><text x="760" y="24" font-size="11" font-weight="600">Trait (by total contribution)</text><rect x="760" y="32" width="12" height="12" fill="#bd2828"/><text x="778" y="42" font-size="11">Coronary heart disease</text><rect x="760" y="48" width="12" height="12" fill="#5f83dd"/><text x="778" y="58" font-size="11">Alzheimer's disease</text><rect x="760" y="64" width="12" height="12" fill="#7fbd28"/><text x="778" y="74" font-size="11">Type 2 diabetes</text><rect x="760" y="80" width="12" height="12" fill="#dd5fcd"/><text x="778" y="90" font-size="11">Stroke</text><rect x="760" y="96" width="12" height="12" fill="#28bda4"/><text x="778" y="106" font-size="11">BMI</text><rect x="760" y="112" width="12" height="12" fill="#dda35f"/><text x="778" y="122" font-size="11">Major depressive disorder</text><rect x="760" y="128" width="12" height="12" fill="#4d28bd"/><text x="778" y="138" font-size="11">Cognitive ability</text><rect x="760" y="144" width="12" height="12" fill="#64dd5f"/><text x="778" y="154" font-size="11">Atrial fibrillation</text><rect x="760" y="160" width="12" height="12" fill="#bd285a"/><text x="778" y="170" font-size="11">Anxiety disorders</text><rect x="760" y="176" width="12" height="12" fill="#5faddd"/><text x="778" y="186" font-size="11">Subjective wellbeing</text><rect x="760" y="192" width="12" height="12" fill="#b1bd28"/><text x="778" y="202" font-size="11">ADHD</text><rect x="760" y="208" width="12" height="12" fill="#c25fdd"/><text x="778" y="218" font-size="11">Breast cancer</text><rect x="760" y="224" width="12" height="12" fill="#28bd72"/><text x="778" y="234" font-size="11">Osteoporosis</text><rect x="760" y="240" width="12" height="12" fill="#dd795f"/><text x="778" y="250" font-size="11">Bipolar disorder</text><rect x="760" y="256" width="12" height="12" fill="#2834bd"/><text x="778" y="266" font-size="11">Schizophrenia</text><rect x="760" y="272" width="12" height="12" fill="#8edd5f"/><text x="778" y="282" font-size="11">Prostate cancer</text><rect x="760" y="288" width="12" height="12" fill="#bd288b"/><text x="778" y="298" font-size="11">Colorectal cancer</text><rect x="760" y="304" width="12" height="12" fill="#5fd8dd"/><text x="778" y="314" font-size="11">Chronic kidney disease</text><rect x="760" y="320" width="12" height="12" fill="#bd9728"/><text x="778" y="330" font-size="11">Asthma</text><rect x="760" y="336" width="12" height="12" fill="#985fdd"/><text x="778" y="346" font-size="11">Type 1 diabetes</text><rect x="760" y="352" width="12" height="12" fill="#28bd40"/><text x="778" y="362" font-size="11">Inflammatory bowel disease</text><rect x="760" y="368" width="12" height="12" fill="#dd5f6f"/><text x="778" y="378" font-size="11">Height</text><rect x="760" y="384" width="12" height="12" fill="#2866bd"/><text x="778" y="394" font-size="11">Household income</text><rect x="760" y="400" width="12" height="12" fill="#b8dd5f"/><text x="778" y="410" font-size="11">Longevity (residual)</text><text x="410" y="415" text-anchor="middle" font-size="12">Best-of-5 ΔQALY by trait (per-trait solo gain)</text></svg>
+<p class="note">
+Each colored segment shows how much QALY you'd gain if you selected
+on that single trait alone. The stacked total is higher than the
+dashed "joint" line because in practice traits compete: the embryo
+that's best on heart disease usually isn't also best on cognition, so
+selecting on a combined index gets you less than the sum of
+selecting on each separately.
+</p>
+<p class="note">
+Compare the bars across scenarios to see which traits benefit most
+from better predictors. Psychiatric conditions and Alzheimer's grow
+disproportionately because their current scores capture only a
+small slice of their heritability — there's a lot of headroom.
+Height barely grows because today's score is already close to its
+ceiling.
+</p>
+
+<h2>Aggregate value to the individual (best-of-5)</h2><table><tr><th>Scenario</th><th>ΔQALY <small>[p10–p90]</small></th><th>QALY × $100k</th><th>Personal $</th><th><b>Total (personal)</b></th><th style='color:#888'>Total (societal)</th></tr><tr><td style='text-align:left'>current PGS</td><td>0.47 <small style='color:#888'>[0.24–0.74]</small></td><td>$47,269</td><td>$87,031</td><td><b>$134,300</b></td><td style='color:#888'>$173,641</td></tr><tr><td style='text-align:left'>SNP-h² ceiling</td><td>1.05 <small style='color:#888'>[0.53–1.63]</small></td><td>$105,104</td><td>$168,896</td><td><b>$274,000</b></td><td style='color:#888'>$343,921</td></tr><tr><td style='text-align:left'>twin h² (additive ceiling)</td><td>1.88 <small style='color:#888'>[0.96–2.90]</small></td><td>$188,135</td><td>$299,102</td><td><b>$487,237</b></td><td style='color:#888'>$607,172</td></tr><tr><td style='text-align:left'>MZ correlation (H², for ref)</td><td>2.07 <small style='color:#888'>[1.06–3.19]</small></td><td>$206,796</td><td>$330,207</td><td><b>$537,003</b></td><td style='color:#888'>$667,219</td></tr></table>
+<p class="note">
+This converts the QALY gain into dollars at <b>$100,000 per
+QALY</b> (the mid-range US figure for what a year of healthy life is
+"worth" in cost-effectiveness analysis; the UK uses about $35k) and
+adds the personal cost savings — the medical bills you avoid paying
+out-of-pocket plus the income you don't lose to illness. The greyed
+societal column is the same calculation using full economic cost
+(including what insurers and taxpayers cover).
+</p>
+<p class="note">
+<b>What was removed:</b> earlier versions included a
+"longevity_residual" trait that ended up being the single largest
+QALY contributor. It's been zeroed out here because there's no
+validated longevity polygenic score in the pipeline, and most of
+what makes people live longer is already counted via the specific
+diseases below — including it separately was double-counting.
+</p>
+<p class="note">
+<b>On overcounting more generally:</b> some traits in this model
+cause others — high BMI raises type-2 diabetes and heart disease
+risk; cognitive ability raises income. The simulation handles part
+of this automatically: it draws each embryo's scores with the
+correct genetic correlations, so an embryo with a low BMI score
+tends to also have low T2D and CAD scores, and the joint-selection
+gain (dashed line in the bar chart) is correctly less than the sum
+of per-trait gains. What it does <i>not</i> fully handle is when a
+trait's QALY-loss figure already bakes in its downstream effects —
+e.g., if "QALY lost to high BMI" includes the diabetes it causes,
+and we also separately count diabetes, that's a residual
+overcount. Two trait pairs are explicitly residualized to avoid
+this: <b>cognition/income</b> (income's $/SD represents only the
+earnings effect not mediated by cognition, which is why cognition
+is $200k/SD and income is much smaller) and <b>BMI vs
+cardiometabolic disease</b> (BMI's QALY/SD is set to the ~45% of
+its health burden that is <i>not</i> via T2D/CVD/CKD/cancer —
+joint pain, sleep apnea, mobility, psychosocial). The remaining
+concern is whether each disease's own QALY-loss figure embeds
+comorbidity effects (e.g., does the T2D figure include the CAD it
+causes?). Published QALY-loss estimates usually don't fully
+disentangle this, so there's likely a residual ~5–10% overcount
+across the cardiometabolic cluster.
+</p>
+
+<h2>Dollar gain: societal vs personal (best-of-5)</h2>
+<table>
+<tr><th>Scenario</th><th>Societal $</th><th>Personal $</th>
+<th>of which medical</th><th>of which productivity</th></tr>
+<tr><td style='text-align:left'>current PGS</td><td>$126,372</td><td>$87,031</td><td>$44,706</td><td>$81,667</td></tr><tr><td style='text-align:left'>SNP-h² ceiling</td><td>$238,817</td><td>$168,896</td><td>$79,456</td><td>$159,361</td></tr><tr><td style='text-align:left'>twin h² (additive ceiling)</td><td>$419,037</td><td>$299,102</td><td>$136,290</td><td>$282,747</td></tr><tr><td style='text-align:left'>MZ correlation (H², for ref)</td><td>$460,422</td><td>$330,207</td><td>$147,973</td><td>$312,450</td></tr>
+</table>
+<p class="note">
+The same total cost saving, broken down two ways. <b>Medical vs
+productivity</b>: medical is healthcare spending avoided
+(hospitalizations, drugs, long-term care); productivity is earnings
+not lost to illness or early death. <b>Societal vs personal</b>:
+societal is the full amount regardless of who pays; personal is what
+the individual themselves avoids paying — their out-of-pocket share
+of medical costs (assumed 12%, the US
+average) plus their own lost income. Each disease's
+medical/productivity ratio comes from published cost-of-illness
+studies (cited inline in the parameter table below).
+</p>
+<p class="note">
+One thing this table doesn't yet account for: healthcare costs have
+been rising about 2% per year faster than general inflation. The
+medical column is in today's dollars, so for a condition that
+strikes 40 years from now the real medical cost will be roughly
+double what's shown here.
+</p>
+
+<h2>Per-trait parameters</h2>
+<p class="note">
+These are the inputs the model uses for each trait. The QALY and cost
+figures come from the disease-burden and cost-of-illness literature;
+the R² and heritability columns are what drives the scenario
+comparison above. If any number looks wrong to you, it probably
+deserves a second look — several of these are rough.
+</p>
+<table>
+<tr><th>Trait</th><th>Type</th><th>Prevalence</th>
+<th>QALY loss if affected<br>
+<small style='font-weight:normal'>(grey: marginal /SD-liability,<br>
+comparable to continuous)</small></th>
+<th>Societal cost: med / prod<br><small>(continuous: $/SD)</small></th>
+<th>Onset/effect age</th><th>Current R²</th><th>WF ratio</th>
+<th>SNP-h²</th><th>Twin h²</th>
+<th>ΔQALY (solo, N=5)</th><th>Δ$ (solo, N=5)</th></tr>
+<tr><td>Alzheimer's disease</td><td>disease</td><td>10.0%</td><td>8.5 <small style='color:#888'>(-1.49/SD)</small></td><td>$175,000 / $175,000</td><td>75</td><td>0.070</td><td>0.90*</td><td>0.20</td><td>0.65</td><td><b>0.219</b></td><td>$9,015</td></tr><tr><td>Type 2 diabetes</td><td>disease</td><td>13.0%</td><td>5.0 <small style='color:#888'>(-1.06/SD)</small></td><td>$144,000 / $56,000</td><td>55</td><td>0.070</td><td>0.80*</td><td>0.18</td><td>0.50</td><td><b>0.195</b></td><td>$7,802</td></tr><tr><td>Coronary heart disease</td><td>disease</td><td>36.0%</td><td>3.0 <small style='color:#888'>(-1.12/SD)</small></td><td>$137,500 / $112,500</td><td>60</td><td>0.060</td><td>0.80*</td><td>0.10</td><td>0.45</td><td><b>0.187</b></td><td>$15,550</td></tr><tr><td>Stroke</td><td>disease</td><td>22.0%</td><td>4.0 <small style='color:#888'>(-1.18/SD)</small></td><td>$124,000 / $76,000</td><td>65</td><td>0.020</td><td>0.80*</td><td>0.12</td><td>0.35</td><td><b>0.107</b></td><td>$5,350</td></tr><tr><td>Atrial fibrillation</td><td>disease</td><td>25.0%</td><td>1.5 <small style='color:#888'>(-0.48/SD)</small></td><td>$112,500 / $37,500</td><td>65</td><td>0.060</td><td>0.85*</td><td>0.12</td><td>0.45</td><td><b>0.077</b></td><td>$7,732</td></tr><tr><td>Breast cancer</td><td>disease</td><td>6.5%</td><td>3.0 <small style='color:#888'>(-0.38/SD)</small></td><td>$90,000 / $60,000</td><td>55</td><td>0.070</td><td>0.85*</td><td>0.13</td><td>0.30</td><td><b>0.072</b></td><td>$3,577</td></tr><tr><td>Major depressive disorder</td><td>disease</td><td>16.0%</td><td>3.0 <small style='color:#888'>(-0.73/SD)</small></td><td>$30,000 / $70,000</td><td>30</td><td>0.020</td><td>0.60</td><td>0.08</td><td>0.37</td><td><b>0.065</b></td><td>$2,163</td></tr><tr><td>Schizophrenia</td><td>disease</td><td>0.7%</td><td>15.0 <small style='color:#888'>(-0.29/SD)</small></td><td>$375,000 / $1,125,000</td><td>22</td><td>0.080</td><td>0.75*</td><td>0.24</td><td>0.75</td><td><b>0.056</b></td><td>$5,586</td></tr><tr><td>ADHD</td><td>disease</td><td>5.0%</td><td>4.0 <small style='color:#888'>(-0.41/SD)</small></td><td>$66,000 / $234,000</td><td>8</td><td>0.040</td><td>0.60*</td><td>0.22</td><td>0.74</td><td><b>0.052</b></td><td>$3,926</td></tr><tr><td>Prostate cancer</td><td>disease</td><td>6.5%</td><td>2.0 <small style='color:#888'>(-0.25/SD)</small></td><td>$86,400 / $33,600</td><td>65</td><td>0.090</td><td>0.85*</td><td>0.20</td><td>0.50</td><td><b>0.050</b></td><td>$2,977</td></tr><tr><td>Osteoporosis</td><td>disease</td><td>10.0%</td><td>2.0 <small style='color:#888'>(-0.35/SD)</small></td><td>$80,000 / $20,000</td><td>70</td><td>0.050</td><td>0.85*</td><td>0.20</td><td>0.55</td><td><b>0.048</b></td><td>$2,402</td></tr><tr><td>Bipolar disorder</td><td>disease</td><td>1.0%</td><td>12.0 <small style='color:#888'>(-0.32/SD)</small></td><td>$180,000 / $420,000</td><td>25</td><td>0.040</td><td>0.75*</td><td>0.20</td><td>0.70</td><td><b>0.045</b></td><td>$2,227</td></tr><tr><td>Colorectal cancer</td><td>disease</td><td>4.0%</td><td>3.5 <small style='color:#888'>(-0.30/SD)</small></td><td>$99,000 / $81,000</td><td>60</td><td>0.040</td><td>0.85*</td><td>0.10</td><td>0.30</td><td><b>0.041</b></td><td>$2,132</td></tr><tr><td>Type 1 diabetes</td><td>disease</td><td>0.5%</td><td>10.0 <small style='color:#888'>(-0.14/SD)</small></td><td>$650,000 / $350,000</td><td>12</td><td>0.150</td><td>0.90*</td><td>0.50</td><td>0.85</td><td><b>0.038</b></td><td>$3,803</td></tr><tr><td>Anxiety disorders</td><td>disease</td><td>20.0%</td><td>2.0 <small style='color:#888'>(-0.56/SD)</small></td><td>$18,000 / $42,000</td><td>20</td><td>0.010</td><td>0.60*</td><td>0.05</td><td>0.32</td><td><b>0.035</b></td><td>$1,063</td></tr><tr><td>Chronic kidney disease</td><td>disease</td><td>7.0%</td><td>2.0 <small style='color:#888'>(-0.27/SD)</small></td><td>$127,500 / $22,500</td><td>60</td><td>0.020</td><td>0.80*</td><td>0.07</td><td>0.35</td><td><b>0.025</b></td><td>$1,912</td></tr><tr><td>Asthma</td><td>disease</td><td>8.0%</td><td>1.0 <small style='color:#888'>(-0.15/SD)</small></td><td>$24,000 / $26,000</td><td>10</td><td>0.040</td><td>0.80*</td><td>0.12</td><td>0.60</td><td><b>0.022</b></td><td>$1,093</td></tr><tr><td>Inflammatory bowel disease</td><td>disease</td><td>0.8%</td><td>4.0 <small style='color:#888'>(-0.09/SD)</small></td><td>$260,000 / $140,000</td><td>30</td><td>0.060</td><td>0.85*</td><td>0.27</td><td>0.60</td><td><b>0.016</b></td><td>$1,553</td></tr><tr><td>BMI</td><td>continuous</td><td>—</td><td>-0.60/SD</td><td>$-6,000/SD</td><td>50</td><td>0.120</td><td>0.70</td><td>0.25</td><td>0.65</td><td><b>0.138</b></td><td>$1,376</td></tr><tr><td>Cognitive ability</td><td>continuous</td><td>—</td><td>+0.50/SD</td><td>$+200,000/SD</td><td>35</td><td>0.100</td><td>0.50</td><td>0.20</td><td>0.65</td><td><b>0.090</b></td><td>$35,956</td></tr><tr><td>Subjective wellbeing</td><td>continuous</td><td>—</td><td>+0.50/SD</td><td>$+0/SD</td><td>40</td><td>0.020</td><td>0.55</td><td>0.05</td><td>0.32</td><td><b>0.042</b></td><td>$0</td></tr><tr><td>Height</td><td>continuous</td><td>—</td><td>+0.03/SD</td><td>$+5,000/SD</td><td>30</td><td>0.420</td><td>0.85</td><td>0.48</td><td>0.80</td><td><b>0.014</b></td><td>$2,402</td></tr><tr><td>Household income</td><td>continuous</td><td>—</td><td>+0.05/SD</td><td>$+90,000/SD</td><td>40</td><td>0.025</td><td>0.35</td><td>0.05</td><td>0.25</td><td><b>0.004</b></td><td>$6,774</td></tr><tr><td>Longevity (residual)</td><td>continuous</td><td>—</td><td>+7.00/SD</td><td>$+0/SD</td><td>75</td><td>0.000</td><td>0.80*</td><td>0.00</td><td>0.00</td><td><b>0.000</b></td><td>$0</td></tr>
+</table>
+<p class="note">The two right-hand columns show the gain from
+selecting on this trait alone, with current PGS, best-of-5.
+Diseases are sorted by ΔQALY descending; continuous traits follow.
+<b>WF ratio</b> is the within-family attenuation
+(within-sibship R² ÷ population R²); values marked * are assumed
+defaults (0.75–0.90 for diseases, on the logic that disease
+liability has little parental-nurture inflation), unmarked values
+are from Howe et al. 2022's sibling-GWAS. <b>Sex-specific cancers</b>
+(breast, prostate) use sex-averaged prevalences (~half the per-sex
+lifetime risk), since the model doesn't condition on embryo sex.
+<b>Twin h²</b> values are deliberately discounted ~10–15% from
+headline meta-analytic figures to account for equal-environments
+inflation; this is conservative.</p>
+</body></html>
