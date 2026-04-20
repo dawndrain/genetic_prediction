@@ -96,8 +96,22 @@ def _init_convert_worker(weights):
     _pgs_weights_global = weights
 
 
+AUTOSOMES = set(str(c) for c in range(1, 23))
+
+# Load reference alleles for proper VCF REF/ALT assignment
+import json
+with open("data/ref_alleles.json") as _f:
+    _ref_raw = json.load(_f)
+REF_ALLELES = {(k.split(":")[0], int(k.split(":")[1])): v for k, v in _ref_raw.items()}
+
+VCF_HEADER = """##fileformat=VCFv4.2
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE
+"""
+
+
 def convert_and_merge_one(genome_path_str: str) -> dict | None:
-    """Convert a DTC file to a merged VCF (all autosomes in one file)."""
+    """Convert a DTC file to a merged VCF with proper REF/ALT from reference."""
     genome_path = Path(genome_path_str)
     sample_id = genome_path.name
     out_vcf = MERGED_VCF_DIR / f"{sample_id}.vcf"
@@ -107,51 +121,56 @@ def convert_and_merge_one(genome_path_str: str) -> dict | None:
 
     warnings.filterwarnings("ignore")
     try:
-        t0 = time.time()
         s = SNPs(genome_path_str)
-        # Files in genomes_b37 are already remapped, no remap needed
         snps_df = s.snps
         if snps_df is None or snps_df.empty:
             return None
 
-        # Deduplicate and filter to autosomes (X has ploidy issues with Beagle)
+        # Filter to autosomes, deduplicate
+        snps_df = snps_df[snps_df["chrom"].isin(AUTOSOMES)]
         snps_df = snps_df.drop_duplicates(subset=["chrom", "pos"])
-        autosomes = set(str(c) for c in range(1, 23))
-        snps_df = snps_df[snps_df["chrom"].isin(autosomes)]
-        s._snps = snps_df
 
-        # Export to VCF via snps
-        output_dir = Path("output") / "vcf_batch"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        vcf_filename = f"vcf_batch/{sample_id}"
-        saved_path = s.to_vcf(filename=vcf_filename, qc_only=True, qc_filter=True)
+        # Build (chrom, pos) -> genotype lookup
+        geno = dict(zip(
+            zip(snps_df["chrom"], snps_df["pos"]),
+            snps_df["genotype"]
+        ))
 
-        if not saved_path or not Path(saved_path).exists():
-            return None
-
-        # The saved VCF has all chromosomes already merged - just move it
-        actual = Path(saved_path)
-        if actual.suffix == "":
-            actual = Path(str(actual) + ".vcf")
-            if not actual.exists():
-                # Try without extension
-                actual = Path(saved_path)
-
-        # snps saves as {filename}.vcf, find it
-        for candidate in [Path(f"output/vcf_batch/{sample_id}.vcf"),
-                          Path(saved_path),
-                          Path(f"{saved_path}.vcf")]:
-            if candidate.exists():
-                actual = candidate
-                break
-
+        # Write VCF with proper REF from reference
         MERGED_VCF_DIR.mkdir(parents=True, exist_ok=True)
-        actual.rename(out_vcf)
+        with open(out_vcf, "w") as f:
+            f.write(VCF_HEADER)
+            for (chrom, pos), ref in sorted(REF_ALLELES.items(),
+                                             key=lambda x: (int(x[0][0]) if x[0][0].isdigit() else 99, x[0][1])):
+                gt = geno.get((chrom, pos))
+                if not isinstance(gt, str) or gt == "--" or len(gt) < 2:
+                    continue
+                a1, a2 = gt[0], gt[1]
+                if a1 not in "ACGT" or a2 not in "ACGT":
+                    continue
 
-        elapsed = time.time() - t0
-        return {"genome_id": sample_id, "status": "converted", "time": elapsed}
+                # Determine ALT and genotype based on reference allele
+                alleles = {a1, a2}
+                if alleles == {ref}:
+                    # Homozygous reference
+                    f.write(f"{chrom}\t{pos}\t.\t{ref}\t.\t.\t.\t.\tGT\t0/0\n")
+                elif ref in alleles:
+                    # Heterozygous
+                    alt = (alleles - {ref}).pop()
+                    f.write(f"{chrom}\t{pos}\t.\t{ref}\t{alt}\t.\t.\t.\tGT\t0/1\n")
+                else:
+                    # Homozygous alt (both alleles differ from ref)
+                    if a1 == a2:
+                        f.write(f"{chrom}\t{pos}\t.\t{ref}\t{a1}\t.\t.\t.\tGT\t1/1\n")
+                    else:
+                        # Both alleles differ from ref and from each other — skip
+                        continue
 
-    except Exception as e:
+        return {"genome_id": sample_id, "status": "converted"}
+
+    except Exception:
+        if out_vcf.exists():
+            out_vcf.unlink()
         return None
 
 

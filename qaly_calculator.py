@@ -39,8 +39,10 @@ class DiseaseTrait:
     prevalence: float
     # Average QALYs lost over remaining lifetime if you develop the condition
     qaly_loss_if_affected: float
-    # Average lifetime treatment cost (USD) if you develop the condition
-    lifetime_cost_if_affected: float
+    # Personal lifetime cost: out-of-pocket medical + lost earnings + family caregiving (USD)
+    personal_cost_if_affected: float
+    # Societal lifetime cost: total excess cost including insurer-paid, productivity, etc. (USD)
+    societal_cost_if_affected: float
     # What fraction of phenotypic variance the PGS explains (R² or similar)
     # Used to scale z-scores on the liability scale
     pgs_r2: float
@@ -57,8 +59,10 @@ class ContinuousTrait:
     display_name: str
     # QALY change per 1 SD increase in the trait
     qaly_per_sd: float
-    # Savings per 1 SD increase (positive = good: earnings, avoided costs)
-    savings_per_sd: float
+    # Personal savings per 1 SD increase (out-of-pocket, earnings, family costs)
+    personal_savings_per_sd: float
+    # Societal savings per 1 SD increase (total economic impact)
+    societal_savings_per_sd: float
     pgs_r2: float
     # Age at which the QALY/savings effects are centered (for discounting).
     # For traits with lifelong effects (cognition, height), use a midlife value.
@@ -77,7 +81,8 @@ DISEASE_TRAITS = {
         display_name="Coronary heart disease",
         prevalence=0.09,           # ~9% lifetime risk (Framingham-based)
         qaly_loss_if_affected=3.0, # ~3 QALYs lost on average (acute event + chronic HF)
-        lifetime_cost_if_affected=250_000,  # US lifetime cost estimate
+        personal_cost_if_affected=50_000,
+        societal_cost_if_affected=250_000,  # US lifetime cost estimate
         pgs_r2=0.04,              # typical PGS R² for CAD
         typical_onset_age=60,
         sources="Framingham lifetime risk; GBD 2019; Dunbar-Rees 2018",
@@ -87,7 +92,8 @@ DISEASE_TRAITS = {
         display_name="Type 2 diabetes",
         prevalence=0.13,           # ~13% lifetime risk
         qaly_loss_if_affected=5.0, # chronic condition, ~5 QALYs over remaining life
-        lifetime_cost_if_affected=200_000,  # ADA lifetime cost estimates
+        personal_cost_if_affected=80_000,
+        societal_cost_if_affected=200_000,  # ADA lifetime cost estimates
         pgs_r2=0.03,
         typical_onset_age=55,
         sources="CDC lifetime risk; Zhuo 2013 ADA cost; Sullivan 2020 QALY",
@@ -97,7 +103,8 @@ DISEASE_TRAITS = {
         display_name="Alzheimer's disease",
         prevalence=0.10,           # ~10% lifetime risk (age 65+)
         qaly_loss_if_affected=6.0, # severe quality-of-life impact
-        lifetime_cost_if_affected=350_000,  # Alzheimer's Association 2023
+        personal_cost_if_affected=150_000,
+        societal_cost_if_affected=350_000,  # Alzheimer's Association 2023
         pgs_r2=0.07,              # APOE e4 dominates; GenoBoost AUROC 0.83 (Ohta 2024, N=67K)
         typical_onset_age=75,
         sources="Alzheimer's Association 2023; GBD DALY estimates; Ohta 2024 Nat Commun",
@@ -107,7 +114,9 @@ DISEASE_TRAITS = {
         display_name="Schizophrenia",
         prevalence=0.007,          # ~0.7% lifetime risk
         qaly_loss_if_affected=15.0,  # early onset, chronic, severe
-        lifetime_cost_if_affected=1_500_000,  # lifetime societal cost
+        # ~$30k OOP medical + ~$600k lost lifetime earnings (onset 22, severe work disability)
+        personal_cost_if_affected=600_000,
+        societal_cost_if_affected=1_500_000,  # lifetime societal cost
         pgs_r2=0.05,              # PGS relatively predictive for SCZ
         typical_onset_age=22,
         sources="McGrath 2008 epidemiology; Chong 2016 cost; Millier 2014 QALY",
@@ -117,7 +126,8 @@ DISEASE_TRAITS = {
         display_name="Major depressive disorder",
         prevalence=0.16,           # ~16% lifetime prevalence
         qaly_loss_if_affected=3.0, # episodic but recurrent
-        lifetime_cost_if_affected=100_000,
+        personal_cost_if_affected=40_000,
+        societal_cost_if_affected=100_000,
         pgs_r2=0.02,
         typical_onset_age=30,
         sources="Kessler 2005 NCS-R; Greenberg 2021 cost; Saarni 2007 QALY",
@@ -127,7 +137,8 @@ DISEASE_TRAITS = {
         display_name="Atrial fibrillation",
         prevalence=0.25,           # ~25% lifetime risk after age 40 (Framingham/Rotterdam)
         qaly_loss_if_affected=1.5, # chronic but manageable; moderate utility decrement
-        lifetime_cost_if_affected=150_000,
+        personal_cost_if_affected=30_000,
+        societal_cost_if_affected=150_000,
         pgs_r2=0.04,              # Roselli 2018; SNP h² ~0.22
         typical_onset_age=65,
         sources="Lloyd-Jones 2004 Framingham; Roselli 2018 AF GWAS; Kim 2011 AF cost",
@@ -137,7 +148,8 @@ DISEASE_TRAITS = {
         display_name="Breast cancer",
         prevalence=0.065,          # ~13% in women, ~6.5% population-average
         qaly_loss_if_affected=3.0,
-        lifetime_cost_if_affected=150_000,
+        personal_cost_if_affected=50_000,
+        societal_cost_if_affected=150_000,
         pgs_r2=0.08,              # Mavaddat 2019 PRS313; one of best cancer PGS
         typical_onset_age=55,
         sources="SEER lifetime risk; Mavaddat 2019 AJHG PRS313; Campbell 2019 cost",
@@ -147,7 +159,8 @@ DISEASE_TRAITS = {
         display_name="Prostate cancer",
         prevalence=0.065,          # ~13% in men, ~6.5% population-average
         qaly_loss_if_affected=2.0, # many low-grade; treatment side effects
-        lifetime_cost_if_affected=120_000,
+        personal_cost_if_affected=30_000,
+        societal_cost_if_affected=120_000,
         pgs_r2=0.07,              # Conti 2021 PRS269
         typical_onset_age=65,
         sources="SEER lifetime risk; Conti 2021 Nature Genetics; Wilson 2007 cost",
@@ -157,7 +170,8 @@ DISEASE_TRAITS = {
         display_name="Stroke",
         prevalence=0.06,           # ~6% lifetime from birth
         qaly_loss_if_affected=4.0, # acute mortality ~15% + severe disability
-        lifetime_cost_if_affected=200_000,
+        personal_cost_if_affected=80_000,
+        societal_cost_if_affected=200_000,
         pgs_r2=0.015,             # Mishra 2022 MEGASTROKE; heterogeneous subtypes
         typical_onset_age=65,
         sources="Seshadri 2006 Framingham; Mishra 2022; Taylor 1996 cost updated",
@@ -167,7 +181,8 @@ DISEASE_TRAITS = {
         display_name="Colorectal cancer",
         prevalence=0.04,           # ~4% lifetime risk (SEER)
         qaly_loss_if_affected=3.5,
-        lifetime_cost_if_affected=180_000,
+        personal_cost_if_affected=50_000,
+        societal_cost_if_affected=180_000,
         pgs_r2=0.03,              # Huyghe 2019, Thomas 2023
         typical_onset_age=60,
         sources="SEER lifetime risk; Huyghe 2019 Nat Genet; Mariotto 2011 cost",
@@ -177,7 +192,9 @@ DISEASE_TRAITS = {
         display_name="Bipolar disorder",
         prevalence=0.01,           # ~1% bipolar I
         qaly_loss_if_affected=12.0,  # early onset, chronic, ~15yr life expectancy reduction
-        lifetime_cost_if_affected=600_000,
+        # ~$50k OOP medical + ~$250k lost earnings (onset 25, episodic work disability)
+        personal_cost_if_affected=300_000,
+        societal_cost_if_affected=600_000,
         pgs_r2=0.04,              # PGC3 Mullins 2021
         typical_onset_age=25,
         sources="Merikangas 2007 NCS-R; PGC3 Mullins 2021; Dilsaver 2003 cost",
@@ -187,7 +204,8 @@ DISEASE_TRAITS = {
         display_name="Chronic kidney disease",
         prevalence=0.07,           # ~7% develop CKD stage 3+
         qaly_loss_if_affected=2.0,
-        lifetime_cost_if_affected=150_000,
+        personal_cost_if_affected=60_000,
+        societal_cost_if_affected=150_000,
         pgs_r2=0.02,              # Khan 2022 Nat Commun
         typical_onset_age=60,
         sources="USRDS 2023; Khan 2022 Nat Commun; Honeycutt 2003 CKD cost",
@@ -197,7 +215,8 @@ DISEASE_TRAITS = {
         display_name="Asthma",
         prevalence=0.08,           # ~8% current prevalence
         qaly_loss_if_affected=1.0, # mostly mild-moderate
-        lifetime_cost_if_affected=50_000,
+        personal_cost_if_affected=20_000,
+        societal_cost_if_affected=50_000,
         pgs_r2=0.02,              # Shrine 2023
         typical_onset_age=10,
         sources="CDC asthma prevalence; Shrine 2023; Nurmagambetov 2018 cost",
@@ -207,7 +226,8 @@ DISEASE_TRAITS = {
         display_name="Inflammatory bowel disease",
         prevalence=0.008,          # ~0.5% Crohn's + ~0.3% UC
         qaly_loss_if_affected=4.0, # chronic, relapsing; surgery common
-        lifetime_cost_if_affected=400_000,  # biologics ~$30-50k/yr
+        personal_cost_if_affected=100_000,
+        societal_cost_if_affected=400_000,  # biologics ~$30-50k/yr
         pgs_r2=0.05,              # Strong known loci (NOD2, IL23R); snpnet AUROC 0.90 (Tanigawa 2022) but inflated
         typical_onset_age=30,
         sources="Ng 2017 Lancet; de Lange 2017 Nat Genet; Park 2020 IBD cost",
@@ -217,7 +237,8 @@ DISEASE_TRAITS = {
         display_name="ADHD",
         prevalence=0.05,           # ~5% childhood, ~2.5% persistent into adulthood; using ~5% lifetime
         qaly_loss_if_affected=4.0, # academic failure, accidents, substance abuse, relationships
-        lifetime_cost_if_affected=300_000,  # Doshi 2012; treatment + lost productivity
+        personal_cost_if_affected=80_000,
+        societal_cost_if_affected=300_000,  # Doshi 2012; treatment + lost productivity
         pgs_r2=0.04,              # Demontis 2023 PGC; R² ~3-5% liability
         typical_onset_age=8,
         sources="Demontis 2023 Nat Genet; Doshi 2012 JAACAP cost; Daley 2015 QALY",
@@ -227,7 +248,8 @@ DISEASE_TRAITS = {
         display_name="Type 1 diabetes",
         prevalence=0.005,          # ~0.5% lifetime; onset usually childhood/adolescence
         qaly_loss_if_affected=10.0, # lifelong insulin dependence, complications, reduced lifespan
-        lifetime_cost_if_affected=1_000_000,  # insulin + CGM + complications; Tao 2010
+        personal_cost_if_affected=400_000,
+        societal_cost_if_affected=1_000_000,  # insulin + CGM + complications; Tao 2010
         pgs_r2=0.12,              # HLA-dominated; Sharp 2019 AUROC 0.96 with 85 SNPs. Genetics-only ~0.10-0.15
         typical_onset_age=12,
         sources="Maahs 2010 epidemiology; Sharp 2019 Diabetes Care; Tao 2010 cost",
@@ -237,7 +259,8 @@ DISEASE_TRAITS = {
         display_name="Osteoporosis",
         prevalence=0.10,           # ~10% lifetime prevalence of osteoporotic fracture
         qaly_loss_if_affected=2.0, # hip fracture → high mortality + disability; vertebral less severe
-        lifetime_cost_if_affected=100_000,  # Burge 2007; hip fracture ~$40k acute + long-term care
+        personal_cost_if_affected=30_000,
+        societal_cost_if_affected=100_000,  # Burge 2007; hip fracture ~$40k acute + long-term care
         pgs_r2=0.05,              # Morris 2019 BMD GWAS; PGS for BMD, used as proxy for fracture
         typical_onset_age=70,
         sources="Morris 2019 Nat Genet; Burge 2007 cost; Peasgood 2009 QALY",
@@ -247,7 +270,8 @@ DISEASE_TRAITS = {
         display_name="Anxiety disorders",
         prevalence=0.20,           # ~20% lifetime prevalence (GAD + social + panic + specific)
         qaly_loss_if_affected=2.0, # chronic, moderate disability; less severe than MDD on average
-        lifetime_cost_if_affected=60_000,
+        personal_cost_if_affected=25_000,
+        societal_cost_if_affected=60_000,
         pgs_r2=0.01,              # Purves 2020; very low R², limited GWAS power
         typical_onset_age=20,
         sources="Bandelow 2015 epidemiology; Purves 2020 Nat Genet; Konnopka 2009 cost",
@@ -267,7 +291,8 @@ CONTINUOUS_TRAITS = {
         # Taller people earn slightly more (~$800/inch in some studies).
         # 1 SD height ≈ 2.7 inches → ~$2000/SD in lifetime earnings premium.
         # Modeled as a cost "saving" (higher earning), sign is debatable.
-        savings_per_sd=5_000,  # lifetime earnings premium per SD
+        personal_savings_per_sd=3_000,
+        societal_savings_per_sd=5_000,  # lifetime earnings premium per SD
         # PGS Catalog reports R²=0.717 for PGS001229 but that includes
         # sex/age covariates in snpnet. Genetics-only R² is ~0.16.
         pgs_r2=0.16,
@@ -283,7 +308,8 @@ CONTINUOUS_TRAITS = {
         qaly_per_sd=0.5,
         # Lifetime earnings difference per SD of cognitive ability is large.
         # Conservative estimate: ~$100k-300k lifetime.
-        savings_per_sd=200_000,
+        personal_savings_per_sd=150_000,
+        societal_savings_per_sd=200_000,
         # PGS001232 reports R²=0.127 on UKB fluid intelligence but that's the
         # full model (PGS + age + sex + PCs). Incremental R² (genetics-only) is
         # 0.050 in white British, 0.028 in non-British European. Using ~0.05.
@@ -301,7 +327,8 @@ CONTINUOUS_TRAITS = {
         # psychosocial) are ~40-50% of total. Using 0.6 as direct-only.
         qaly_per_sd=-0.6,
         # Similarly reduce cost to direct-only (not through diseases in model)
-        savings_per_sd=-6_000,
+        personal_savings_per_sd=-4_000,
+        societal_savings_per_sd=-6_000,
         pgs_r2=0.08,             # Privé 2022 LDpred2; Khera 2019 ~5-7%
         typical_effect_age=50,
         sources="Gou 2025 Nat Med; Dixon 2021 MR BMI-QALY; Cawley 2012 obesity cost; Privé 2022",
@@ -318,7 +345,8 @@ CONTINUOUS_TRAITS = {
         # Savings here is the income itself, not medical cost savings.
         # But rg=0.70 with cognition means most is already captured.
         # Direct (non-cognition) component: ~30% of total ≈ $12k.
-        savings_per_sd=12_000,
+        personal_savings_per_sd=10_000,
+        societal_savings_per_sd=12_000,
         # PGS R² for income is low — most variance is environmental.
         pgs_r2=0.03,            # Hill 2019; Howe 2022 within-family R² even lower
         typical_effect_age=40,
@@ -342,7 +370,8 @@ CONTINUOUS_TRAITS = {
         # qaly_per_sd = 7.0 (12yr SD × 0.6 QALY/marginal yr) — same as
         # full longevity since the residual still predicts *lifespan*.
         qaly_per_sd=7.0,
-        savings_per_sd=0,
+        personal_savings_per_sd=0,
+        societal_savings_per_sd=0,
         pgs_r2=0.01,
         typical_effect_age=75,
         sources="Timmers 2019 eLife; Deelen 2019; residual after regressing on trait PGS",
@@ -355,7 +384,8 @@ CONTINUOUS_TRAITS = {
         # Hard to monetize, but 1 SD of life satisfaction ≈ 0.5-1.0 QALY
         # if you take utility weights seriously (which is circular...).
         qaly_per_sd=0.5,
-        savings_per_sd=0,        # no clear cost pathway
+        personal_savings_per_sd=0,
+        societal_savings_per_sd=0,        # no clear cost pathway
         # PGS prediction is very weak — R² ~1-2% at best.
         pgs_r2=0.02,            # Okbay 2016; Baselmans 2019
         typical_effect_age=40,
@@ -592,7 +622,8 @@ def compute_disease_impact(pgs_z: float, trait: DiseaseTrait,
 
     # Positive = good: lower risk means positive QALY and savings
     qaly_delta = -risk_difference * trait.qaly_loss_if_affected * df
-    savings = -risk_difference * trait.lifetime_cost_if_affected * df
+    personal_savings = -risk_difference * trait.personal_cost_if_affected * df
+    societal_savings = -risk_difference * trait.societal_cost_if_affected * df
 
     return {
         "trait": trait.display_name,
@@ -602,7 +633,8 @@ def compute_disease_impact(pgs_z: float, trait: DiseaseTrait,
         "individual_risk": individual_risk,
         "risk_difference": risk_difference,
         "qaly_delta": qaly_delta,
-        "savings": savings,
+        "personal_savings": personal_savings,
+        "societal_savings": societal_savings,
         "discount_factor": df,
     }
 
@@ -617,7 +649,8 @@ def compute_continuous_impact(pgs_z: float, trait: ContinuousTrait,
     df = discount_factor(trait.typical_effect_age, pure_discount_rate, use_survival)
 
     qaly_delta = trait_sd_shift * trait.qaly_per_sd * df
-    savings = trait_sd_shift * trait.savings_per_sd * df
+    personal_savings = trait_sd_shift * trait.personal_savings_per_sd * df
+    societal_savings = trait_sd_shift * trait.societal_savings_per_sd * df
 
     return {
         "trait": trait.display_name,
@@ -625,7 +658,8 @@ def compute_continuous_impact(pgs_z: float, trait: ContinuousTrait,
         "pgs_z": pgs_z,
         "trait_sd_shift": trait_sd_shift,
         "qaly_delta": qaly_delta,
-        "savings": savings,
+        "personal_savings": personal_savings,
+        "societal_savings": societal_savings,
         "discount_factor": df,
     }
 
@@ -658,12 +692,14 @@ def compute_all(scores: dict[str, float],
             print(f"Warning: unknown trait '{trait_name}', skipping")
 
     total_qaly = sum(r["qaly_delta"] for r in results)
-    total_savings = sum(r["savings"] for r in results)
+    total_personal = sum(r["personal_savings"] for r in results)
+    total_societal = sum(r["societal_savings"] for r in results)
 
     return {
         "traits": results,
         "total_qaly_delta": total_qaly,
-        "total_savings": total_savings,
+        "total_personal_savings": total_personal,
+        "total_societal_savings": total_societal,
     }
 
 
@@ -685,15 +721,14 @@ def format_results(results: dict) -> str:
     disease_results = [r for r in results["traits"] if r["type"] == "disease"]
     if disease_results:
         lines.append("DISEASE RISK")
-        lines.append("-" * 72)
-        lines.append(f"  {'Trait':<25} {'PGS z':>7} {'Base risk':>10} {'Your risk':>10} {'ΔRisk':>8} {'QALYs':>8} {'Savings':>10}")
-        lines.append(f"  {'':<25} {'':>7} {'':>10} {'':>10} {'':>8} {'':>8} {'':>10}")
+        lines.append("-" * 92)
+        lines.append(f"  {'Trait':<25} {'PGS z':>7} {'Base':>6} {'Yours':>6} {'ΔRisk':>7} {'QALYs':>7} {'Personal':>10} {'Societal':>10}")
         for r in disease_results:
             lines.append(
                 f"  {r['trait']:<25} {r['pgs_z']:>+7.2f} "
-                f"{r['baseline_risk']:>9.1%} {r['individual_risk']:>9.1%} "
-                f"{r['risk_difference']:>+7.1%} {r['qaly_delta']:>+8.3f} "
-                f"${r['savings']:>+9,.0f}"
+                f"{r['baseline_risk']:>5.1%} {r['individual_risk']:>5.1%} "
+                f"{r['risk_difference']:>+6.1%} {r['qaly_delta']:>+7.3f} "
+                f"${r['personal_savings']:>+9,.0f} ${r['societal_savings']:>+9,.0f}"
             )
         lines.append("")
 
@@ -701,22 +736,22 @@ def format_results(results: dict) -> str:
     cont_results = [r for r in results["traits"] if r["type"] == "continuous"]
     if cont_results:
         lines.append("CONTINUOUS TRAITS")
-        lines.append("-" * 72)
-        lines.append(f"  {'Trait':<25} {'PGS z':>7} {'Trait ΔSD':>10} {'QALYs':>8} {'Savings':>10}")
-        lines.append(f"  {'':<25} {'':>7} {'':>10} {'':>8} {'':>10}")
+        lines.append("-" * 92)
+        lines.append(f"  {'Trait':<25} {'PGS z':>7} {'ΔSD':>6} {'QALYs':>7} {'Personal':>10} {'Societal':>10}")
         for r in cont_results:
             lines.append(
                 f"  {r['trait']:<25} {r['pgs_z']:>+7.2f} "
-                f"{r['trait_sd_shift']:>+9.2f} {r['qaly_delta']:>+8.3f} "
-                f"${r['savings']:>+9,.0f}"
+                f"{r['trait_sd_shift']:>+5.2f} {r['qaly_delta']:>+7.3f} "
+                f"${r['personal_savings']:>+9,.0f} ${r['societal_savings']:>+9,.0f}"
             )
         lines.append("")
 
     # Totals
-    lines.append("=" * 72)
-    lines.append(f"  TOTAL QALYs gained: {results['total_qaly_delta']:>+.3f}")
-    lines.append(f"  TOTAL savings:      ${results['total_savings']:>+,.0f}")
-    lines.append("=" * 72)
+    lines.append("=" * 92)
+    lines.append(f"  TOTAL QALYs gained:    {results['total_qaly_delta']:>+.3f}")
+    lines.append(f"  Personal savings:      ${results['total_personal_savings']:>+,.0f}  (OOP medical + lost earnings + family caregiving)")
+    lines.append(f"  Societal savings:      ${results['total_societal_savings']:>+,.0f}  (total economic impact)")
+    lines.append("=" * 92)
     lines.append("")
     lines.append("NOTE: These are rough estimates assuming trait independence,")
     lines.append("no time discounting, and population-average prevalence rates.")
@@ -818,8 +853,9 @@ def simulate_embryo_selection(
     mean_qaly = np.mean(qaly_matrix, axis=1)
     gain = best_qaly - mean_qaly
 
-    # Also compute savings matrix for the selected embryo
-    savings_matrix = np.zeros((n_simulations, n_embryos))
+    # Also compute personal/societal savings matrices for the selected embryo
+    personal_matrix = np.zeros((n_simulations, n_embryos))
+    societal_matrix = np.zeros((n_simulations, n_embryos))
     for t_idx, trait_name in enumerate(all_traits):
         if trait_name not in active_set:
             continue
@@ -832,19 +868,19 @@ def simulate_embryo_selection(
             residual_sd = (1 - trait.pgs_r2) ** 0.5
             risk = 1 - norm.cdf((threshold - liability_shift) / residual_sd)
             risk_diff = risk - trait.prevalence
-            savings_contrib = -risk_diff * trait.lifetime_cost_if_affected * df
+            personal_matrix += -risk_diff * trait.personal_cost_if_affected * df
+            societal_matrix += -risk_diff * trait.societal_cost_if_affected * df
         else:
             trait = CONTINUOUS_TRAITS[trait_name]
             df = discount_factor(trait.typical_effect_age, pure_discount_rate, use_survival)
             trait_sd_shift = z * (trait.pgs_r2 ** 0.5)
-            savings_contrib = trait_sd_shift * trait.savings_per_sd
-        savings_matrix += savings_contrib
+            personal_matrix += trait_sd_shift * trait.personal_savings_per_sd * df
+            societal_matrix += trait_sd_shift * trait.societal_savings_per_sd * df
 
     # Select same embryo (by QALY) for savings calculation
     best_idx = np.argmax(qaly_matrix, axis=1)
-    best_savings = savings_matrix[np.arange(n_simulations), best_idx]
-    mean_savings = np.mean(savings_matrix, axis=1)
-    savings_gain = best_savings - mean_savings
+    personal_gain = personal_matrix[np.arange(n_simulations), best_idx] - np.mean(personal_matrix, axis=1)
+    societal_gain = societal_matrix[np.arange(n_simulations), best_idx] - np.mean(societal_matrix, axis=1)
 
     # Per-trait breakdown: expected z-score of selected embryo
     per_trait_z = {}
@@ -874,7 +910,8 @@ def simulate_embryo_selection(
             risk = 1 - norm.cdf((threshold - liability_shift) / residual_sd_val)
             risk_diff = risk - trait.prevalence
             solo_qaly = float(np.mean(-risk_diff * trait.qaly_loss_if_affected * df))
-            solo_savings = float(np.mean(-risk_diff * trait.lifetime_cost_if_affected * df))
+            solo_personal = float(np.mean(-risk_diff * trait.personal_cost_if_affected * df))
+            solo_societal = float(np.mean(-risk_diff * trait.societal_cost_if_affected * df))
         else:
             trait = CONTINUOUS_TRAITS[trait_name]
             df = discount_factor(trait.typical_effect_age, pure_discount_rate, use_survival)
@@ -887,12 +924,14 @@ def simulate_embryo_selection(
 
             trait_sd_shift = selected_z * (trait.pgs_r2 ** 0.5)
             solo_qaly = float(np.mean(trait_sd_shift * trait.qaly_per_sd * df))
-            solo_savings = float(np.mean(trait_sd_shift * trait.savings_per_sd * df))
+            solo_personal = float(np.mean(trait_sd_shift * trait.personal_savings_per_sd * df))
+            solo_societal = float(np.mean(trait_sd_shift * trait.societal_savings_per_sd * df))
 
         per_trait_solo[trait_name] = {
             "mean_selected_z": float(np.mean(selected_z)),
             "qaly_gain": solo_qaly,
-            "savings_gain": solo_savings,
+            "personal_gain": solo_personal,
+            "societal_gain": solo_societal,
         }
 
     return {
@@ -905,8 +944,8 @@ def simulate_embryo_selection(
         "qaly_gain_median": float(np.median(gain)),
         "qaly_gain_p10": float(np.percentile(gain, 10)),
         "qaly_gain_p90": float(np.percentile(gain, 90)),
-        "savings_gain_mean": float(np.mean(savings_gain)),
-        "savings_gain_median": float(np.median(savings_gain)),
+        "personal_gain_mean": float(np.mean(personal_gain)),
+        "societal_gain_mean": float(np.mean(societal_gain)),
         "per_trait_selected_z": per_trait_z,
         "per_trait_solo": per_trait_solo,
     }
@@ -929,9 +968,10 @@ def format_embryo_results(results: dict) -> str:
     lines.append("")
     lines.append("COMBINED SELECTION (pick embryo with best total QALY):")
     lines.append("")
-    lines.append(f"  QALYs gained:  {results['qaly_gain_mean']:>+.3f}  (median {results['qaly_gain_median']:>+.3f},"
+    lines.append(f"  QALYs gained:      {results['qaly_gain_mean']:>+.3f}  (median {results['qaly_gain_median']:>+.3f},"
                  f"  10th-90th: {results['qaly_gain_p10']:>+.3f} to {results['qaly_gain_p90']:>+.3f})")
-    lines.append(f"  Savings:       ${results['savings_gain_mean']:>+,.0f}  (median ${results['savings_gain_median']:>+,.0f})")
+    lines.append(f"  Personal savings:  ${results['personal_gain_mean']:>+,.0f}  (OOP + lost earnings + family)")
+    lines.append(f"  Societal savings:  ${results['societal_gain_mean']:>+,.0f}  (total economic)")
     lines.append("")
     lines.append("  PGS z-score of selected embryo (among siblings):")
     lines.append(f"    {'Trait':<25} {'Selected z':>10}")
@@ -943,12 +983,12 @@ def format_embryo_results(results: dict) -> str:
     lines.append("-" * 72)
     lines.append("SINGLE-TRAIT SELECTION (what if you only selected for one trait?):")
     lines.append("")
-    lines.append(f"  {'Trait':<25} {'Sel. z':>8} {'QALYs':>8} {'Savings':>10}")
+    lines.append(f"  {'Trait':<25} {'Sel. z':>8} {'QALYs':>8} {'Personal':>10} {'Societal':>10}")
     for trait_name, data in results["per_trait_solo"].items():
         display = DISEASE_TRAITS.get(trait_name, CONTINUOUS_TRAITS.get(trait_name))
         lines.append(
             f"  {display.display_name:<25} {data['mean_selected_z']:>+8.3f}"
-            f" {data['qaly_gain']:>+8.3f} ${data['savings_gain']:>+9,.0f}"
+            f" {data['qaly_gain']:>+8.3f} ${data['personal_gain']:>+9,.0f} ${data['societal_gain']:>+9,.0f}"
         )
 
     lines.append("")
@@ -1021,13 +1061,13 @@ def main():
 
     if args.list_traits:
         print("\nDisease traits:")
-        print(f"  {'Name':<20} {'Prevalence':>10} {'QALY loss':>10} {'Cost':>12} {'PGS R²':>8}")
+        print(f"  {'Name':<25} {'Prev':>6} {'QALY':>5} {'Onset':>5} {'Personal':>10} {'Societal':>10} {'R²':>6}")
         for t in DISEASE_TRAITS.values():
-            print(f"  {t.name:<20} {t.prevalence:>9.1%} {t.qaly_loss_if_affected:>10.1f} ${t.lifetime_cost_if_affected:>10,} {t.pgs_r2:>8.3f}")
+            print(f"  {t.name:<25} {t.prevalence:>5.1%} {t.qaly_loss_if_affected:>5.1f} {t.typical_onset_age:>5.0f} ${t.personal_cost_if_affected:>9,} ${t.societal_cost_if_affected:>9,} {t.pgs_r2:>6.3f}")
         print("\nContinuous traits:")
-        print(f"  {'Name':<20} {'QALY/SD':>10} {'Savings/SD':>12} {'PGS R²':>8}")
+        print(f"  {'Name':<25} {'QALY/SD':>8} {'Pers$/SD':>10} {'Soc$/SD':>10} {'R²':>6}")
         for t in CONTINUOUS_TRAITS.values():
-            print(f"  {t.name:<20} {t.qaly_per_sd:>+10.3f} ${t.savings_per_sd:>+10,} {t.pgs_r2:>8.3f}")
+            print(f"  {t.name:<25} {t.qaly_per_sd:>+8.2f} ${t.personal_savings_per_sd:>+9,} ${t.societal_savings_per_sd:>+9,} {t.pgs_r2:>6.3f}")
         return
 
     if args.embryos:
