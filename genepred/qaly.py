@@ -446,6 +446,24 @@ CONTINUOUS_TRAITS: dict[str, ContinuousTrait] = {
         typical_effect_age=50,
         sources="Gou 2025 Nat Med; Dixon 2021 MR BMI-QALY; Cawley 2012 obesity cost; Privé 2022",
     ),
+    "educational_attainment": ContinuousTrait(
+        name="educational_attainment",
+        display_name="Educational attainment",
+        # Years of schooling (1 SD ≈ 3.5 years in EA4). Heavily mediated
+        # by cognition (rg ≈ 0.70) and predicts the same downstream
+        # outcomes (income, health-literacy, mortality), so to avoid
+        # triple-counting against cognition AND income, only the residual
+        # direct-education effect is valued here: roughly the wage
+        # premium and health gain from credentialing/network access net
+        # of ability. Set to 0 by default — the cognition + income
+        # entries already carry the QALY/$ for this pathway. Kept as a
+        # trait so the score appears in reports.
+        qaly_per_sd=0.0,
+        savings_per_sd=0,
+        pgs_r2_population=0.13,  # EA4 excl-23andMe (full EA4 ≈0.16)
+        within_family_ratio=0.40,  # Howe 2022: EA shrinks ~60% within-family
+        sources="Okbay 2022 EA4; Howe 2022; Heckman 2018 (returns to ed)",
+    ),
     "income": ContinuousTrait(
         name="income",
         display_name="Household income",

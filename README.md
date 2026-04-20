@@ -73,8 +73,12 @@ pip install -e .[io]
 
 ```bash
 genepred fetch-weights                    # one-time, ~300 MB
-genepred score my_23andme.txt              # 30s, no imputation needed
-genepred report my_23andme.txt             # adds risk + QALY columns
+
+# no genome of your own? grab a public-domain 23andMe file (24 MB):
+./examples/fetch_example_genome.sh        # → data/example_genome.txt
+
+genepred score data/example_genome.txt    # 30s, no imputation needed
+genepred report data/example_genome.txt   # adds risk + QALY columns
 ```
 
 `score` auto-detects VCF vs DTC text, projects onto 1KG ancestry PCs
