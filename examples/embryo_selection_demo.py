@@ -37,7 +37,8 @@ import pandas as pd
 
 from genepred import qaly as q
 from genepred.catalog import CURATED
-from genepred.embryo import (
+from embryo import (
+    score_chrom as score,
     build_hmm_context,
     hmm_recover,
     load_parents,
@@ -45,9 +46,6 @@ from genepred.embryo import (
     pick_parents,
     simulate_biopsy,
     simulate_child,
-)
-from genepred.embryo import (
-    score_chrom as score,
 )
 from genepred.io import parse_chroms as _parse_chroms
 from genepred.paths import resource
@@ -196,8 +194,8 @@ def _write_html(detail, qaly_per_emb, best, n_emb, q, out="docs/embryo_report.ht
         cls = ' class="unrel"' if unreliable else ""
         cells = "".join(
             f'<td style="{cell_color(dq[i])}"{cls}>'
-            f"<b>{z[i]:+.2f}σ</b><br>"
-            f"<small>{'risk ' + format(val[i], '.1%') if kind == 'disease' else format(val[i], '+.2f') + ' SD'}</small><br>"
+            f"<b>{'risk ' + format(val[i], '.1%') if kind == 'disease' else format(val[i], '+.2f') + 'σ for trait'}</b><br>"
+            f"<small>{z[i]:+.2f}σ raw</small><br>"
             f'<small class="dq">{dq[i]:+.3f} QALY</small></td>'
             for i in range(n_emb)
         )
@@ -236,9 +234,9 @@ def _write_html(detail, qaly_per_emb, best, n_emb, q, out="docs/embryo_report.ht
 {n_emb} embryos from 1KG CEU parents, 0.05× biopsy coverage, HMM-recovered
 genotypes scored on {len(detail)} traits. Rows are sorted by
 <b>expected selection impact</b> (SD of ΔQALY across embryos — traits where
-your choice matters most are at the top). Each cell: PGS z-score vs 1KG-EUR,
-implied risk (diseases) or trait shift in SD (continuous; ↑ marks traits
-where higher is better), and ΔQALY relative to the sibling mean. Cell shade
+your choice matters most are at the top). Each cell: implied risk (diseases) 
+or trait shift in SD (continuous; ↑ marks traits where higher is better), 
+PGS z-score vs 1KG-EUR, and ΔQALY relative to the sibling mean. Cell shade
 is by <b>ΔQALY</b>:
 <span style="background:rgba(40,160,80,0.6)"></span> better than sib-mean,
 <span style="background:rgba(210,70,60,0.6)"></span> worse — so green is

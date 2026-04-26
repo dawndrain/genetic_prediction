@@ -1,6 +1,6 @@
 """Scoring smoke tests that run without 1KG / network. The full
 end-to-end (with PC adjustment against the shipped resources) is
-exercised separately by `genepred report data/example_genome.txt`."""
+exercised separately by `genepred score data/example_genome.txt`."""
 
 import csv
 

@@ -57,11 +57,38 @@ def _ref_panel(chrom: str) -> Path | None:
     """Find the 1KG Phase3 VCF for one chromosome. Prefers the
     position-deduped copy (raw 1KG has multi-allelic sites split into
     adjacent same-position rows on chr12/14/17, which Beagle 5.5
-    rejects). Run `reference/dedup_1kg.py` once to produce these."""
+    rejects). Run `reference/onekg/dedup_1kg.py` once to produce these."""
     dedup = data_dir() / "1kg_dedup" / f"chr{chrom}.vcf.gz"
     if dedup.exists():
         return dedup
     return next(kg_dir().glob(f"ALL.chr{chrom}.*.vcf.gz"), None)
+
+
+def _require_ref_panels(chrom_list: list[str]) -> None:
+    """Fail fast with the exact commands to run if any requested
+    chromosome is missing a Beagle-compatible reference panel."""
+    missing = [c for c in chrom_list if _ref_panel(c) is None]
+    if not missing:
+        return
+    kg = kg_dir()
+    dedup = data_dir() / "1kg_dedup"
+    have_raw = any(list(kg.glob(f"ALL.chr{c}.*.vcf.gz")) for c in missing)
+    if have_raw:
+        hint = (
+            "Raw 1KG VCFs are present but not deduped "
+            "(Beagle 5.5 rejects multi-allelic dup-position rows).\n"
+            "  python reference/onekg/dedup_1kg.py"
+        )
+    else:
+        hint = (
+            "Download the 1KG Phase 3 reference first (~15 GB), then dedup:\n"
+            "  ./reference/onekg/download_1kg.sh\n"
+            "  python reference/onekg/dedup_1kg.py"
+        )
+    raise FileNotFoundError(
+        f"Beagle reference panel not found for chr{', chr'.join(missing)}.\n"
+        f"Searched: {dedup}/  and  {kg}/\n\n{hint}"
+    )
 
 
 def _diploidize_x(input_vcf: Path) -> Path:
@@ -165,6 +192,7 @@ def impute(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     chrom_list = parse_chroms(chroms)
+    _require_ref_panels(chrom_list)
     if not (in_dir / f"chr{chrom_list[-1]}.vcf").exists():
         print(f"[beagle] conforming {genotype_path} → per-chrom VCFs", file=sys.stderr)
         by_chrom = load_genotype_by_chrom(genotype_path)

@@ -3,12 +3,11 @@
 Public surface:
     genepred.io        load DTC/VCF genomes, write conformed VCFs
     genepred.pca       project a genome onto 1KG ancestry PCs
-    genepred.scoring   compute raw PGS, normalize to z, PC-adjust
+    genepred.scoring   compute raw PGS, normalize to z, PC-adjust, QALY-annotated report
     genepred.catalog   curated PGS list + on-demand download
     genepred.impute    Beagle (local) and Michigan (submit/fetch) backends
     genepred.qaly      QALY model parameters and calculator
     genepred.embryo    meiosis simulation + selection
-    genepred.report    HTML report generation
 
 CLI entry point: `genepred` (see cli.py).
 """

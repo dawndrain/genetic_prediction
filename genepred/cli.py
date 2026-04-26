@@ -1,7 +1,6 @@
 """Command-line interface for genepred.
 
-genepred score <genotype>           # raw PGS table (z, percentile)
-genepred report <genotype>          # PGS + QALY/risk report
+genepred score <genotype>           # PGS + QALY/risk report (--basic for compact table)
 genepred fetch-weights              # download curated PGS files
 genepred impute beagle <genotype>   # local imputation (default)
 genepred impute michigan submit ... # higher-quality, manual decrypt
@@ -23,8 +22,7 @@ from genepred import qaly as _qaly
 from genepred.catalog import CURATED, ensure_weights
 from genepred.impute import beagle as _beagle
 from genepred.impute import michigan as _mich
-from genepred.report import format_report
-from genepred.scoring import format_results, score_genome
+from genepred.scoring import format_report, format_results, score_genome
 
 
 @click.group()
@@ -51,8 +49,13 @@ def main():
     help="Skip ancestry-PC residualization; use ref-pop only.",
 )
 @click.option("--weights-dir", type=click.Path(), default=None)
+@click.option(
+    "--basic",
+    is_flag=True,
+    help="Compact one-row-per-PGS table (skips QALY/risk annotation).",
+)
 @click.option("--json", "as_json", is_flag=True)
-def cli_score(genotype, build, ref_pop, no_pc_adjust, weights_dir, as_json):
+def cli_score(genotype, build, ref_pop, no_pc_adjust, weights_dir, basic, as_json):
     """Score one genome on every available PGS weight file."""
     results, meta = score_genome(
         genotype,
@@ -76,31 +79,10 @@ def cli_score(genotype, build, ref_pop, no_pc_adjust, weights_dir, as_json):
                 indent=2,
             )
         )
-    else:
+    elif basic:
         click.echo(format_results(results, meta))
-
-
-@main.command("report")
-@click.argument("genotype", type=click.Path(exists=True))
-@click.option("--build", type=click.Choice(["GRCh37", "GRCh38"]), default="GRCh37")
-@click.option(
-    "--ref-pop",
-    type=click.Choice(["EUR", "AFR", "AMR", "EAS", "SAS", "ALL"]),
-    default=None,
-)
-@click.option("--no-pc-adjust", is_flag=True)
-@click.option("--weights-dir", type=click.Path(), default=None)
-def cli_report(genotype, build, ref_pop, no_pc_adjust, weights_dir):
-    """Full PGS + risk/QALY report for one genome."""
-    results, meta = score_genome(
-        genotype,
-        build=build,
-        pc_adjust=not no_pc_adjust,
-        ref_pop=ref_pop,
-        weights_dir=Path(weights_dir) if weights_dir else None,
-        verbose=True,
-    )
-    click.echo(format_report(results, meta, source=genotype))
+    else:
+        click.echo(format_report(results, meta, source=genotype))
 
 
 @main.command("fetch-weights")

@@ -77,8 +77,8 @@ genepred fetch-weights                    # one-time, ~300 MB
 # no genome of your own? grab a public-domain 23andMe file (24 MB):
 ./examples/fetch_example_genome.sh        # → data/example_genome.txt
 
-genepred score data/example_genome.txt    # 30s, no imputation needed
-genepred report data/example_genome.txt   # adds risk + QALY columns
+genepred score data/example_genome.txt           # PGS + risk + QALY report
+genepred score data/example_genome.txt --basic   # compact table, one row per PGS
 ```
 
 `score` auto-detects VCF vs DTC text, projects onto 1KG ancestry PCs
@@ -109,20 +109,15 @@ Set `MICHIGAN_API_TOKEN` (get one at
 https://imputationserver.sph.umich.edu → Account → API Token) for the
 Michigan path.
 
-### Embryo-selection calculator
+### Clinical embryo pipeline demo (parents → biopsy → HMM → rank)
 
-```bash
-genepred qaly --embryos 5                  # best-of-5 sibs, all traits
-genepred qaly --embryos 10 --only heart_disease type2_diabetes
-genepred qaly --scores heart_disease=-0.5 --scores height=1.2
-genepred traits                            # list traits + parameters
-```
-
-### Embryo demo (parents → biopsy → HMM → rank)
+This produces a report like [embryo report](https://htmlpreview.github.io/?https://github.com/dawndrain/genetic_prediction/blob/main/docs/embryo_report.html)
 
 ```bash
 python examples/embryo_selection_demo.py --pop CEU --n-embryos 5
 ```
+
+todo: how to get a similar report for real embryos
 
 ## Layout
 
@@ -130,12 +125,10 @@ python examples/embryo_selection_demo.py --pop CEU --n-embryos 5
 genepred/        # the installable package + CLI
   io.py          # DTC/VCF loading, 1KG-conformed VCF emission
   pca.py         # project onto 1KG ancestry PCs, assign super-pop
-  scoring.py     # raw PGS, z-score (PC-adjusted or ref-pop), √f overlap correction
+  scoring.py     # raw PGS, z-score (PC-adjusted or ref-pop), √f overlap correction, QALY-annotated report
   catalog.py     # curated current-best PGS per trait + download/verify
   impute/        # beagle (local default), michigan (submit/status/fetch)
   qaly.py        # disease+continuous trait tables, rg matrix, liability model, MC
-  embryo.py      # meiosis, biopsy, 4-state HMM haplotype recovery
-  report.py      # scoring → QALY-annotated text report
   resources/     # SHIPPED: PCA loadings, 1KG score summaries, PC coefs (~4 MB)
 reference/       # rebuilds resources/ from scratch — reproducibility, not user path
 validation/      # openSNP height check + PGS Catalog Calculator comparison

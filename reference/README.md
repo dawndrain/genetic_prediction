@@ -7,9 +7,9 @@ Run from the repo root (~2 h, ~30 GB disk):
 
 ```bash
 ./reference/onekg/download_1kg.sh        # 1KG Phase3 VCFs → data/1kg/
-python reference/onekg/dedup_1kg.py      # → data/1kg_dedup/ — drops
-                                          #   multi-allelic dup-position rows
-                                          #   (≈ bcftools norm -d both)
+                                          #   then dedup_1kg.py → data/1kg_dedup/
+                                          #   (drops multi-allelic dup-position
+                                          #   rows; ≈ bcftools norm -d both)
 python reference/onekg/compute_1kg_pca.py        # → loadings.tsv, sample_pcs.tsv
 genepred fetch-weights                            # PGS Catalog → data/pgs_scoring_files/
                                                    #   (rsID backfill runs automatically)
