@@ -35,43 +35,78 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from genepred import qaly as q
-from genepred.catalog import CURATED
-from embryo import (
+sys.path.insert(0, str(Path(__file__).parent))
+
+from genepred import qaly as q  # noqa: E402,I001
+from genepred.catalog import CURATED  # noqa: E402
+from embryo import (  # noqa: E402
     score_chrom as score,
+    apply_switch_errors,
     build_hmm_context,
     hmm_recover,
-    load_parents,
+    hmm_recover_switch_aware,
+    joint_recover,
+    load_parents_cached,
     load_pgs_for_chrom,
     pick_parents,
     simulate_biopsy,
     simulate_child,
 )
-from genepred.io import parse_chroms as _parse_chroms
-from genepred.paths import resource
-from genepred.qaly import liability_threshold_risk
+from genepred.io import parse_chroms as _parse_chroms  # noqa: E402
+from genepred.paths import resource  # noqa: E402
+from genepred.qaly import liability_threshold_risk  # noqa: E402
 
 _ARGS: argparse.Namespace  # set in main() before Pool fork; inherited by workers
 
 
 def _do_chrom(chrom):
     a = _ARGS
-    par = load_parents(chrom, a.father, a.mother)
-    M = len(par.pos)
-    pgs = load_pgs_for_chrom(chrom, par)
-    ctx = build_hmm_context(par)
-    pmid = score((par.pat.sum(0) + par.mat.sum(0)) / 2, pgs)
-    emb = []
+    par_true = load_parents_cached(chrom, a.father, a.mother)
+    M = len(par_true.pos)
+    pgs = load_pgs_for_chrom(chrom, par_true)
+    pmid = score((par_true.pat.sum(0) + par_true.mat.sum(0)) / 2, pgs)
+
+    rng_sw = np.random.default_rng((a.seed, int(chrom), 999))
+    par_obs, _, _ = apply_switch_errors(par_true, a.switch_error_rate, rng_sw)
+    ctx = build_hmm_context(par_obs)
+
+    truths, biops = [], []
     for e in range(a.n_embryos):
         rng = np.random.default_rng((a.seed, e, int(chrom)))
-        true_geno, _, _ = simulate_child(par, rng)
-        n_ref, n_alt = simulate_biopsy(true_geno, a.coverage, a.seq_err, rng)
-        rec_geno, _, _ = hmm_recover(par, ctx, n_ref, n_alt, a.seq_err)
+        true_geno, _, _ = simulate_child(par_true, rng)
+        truths.append(true_geno)
+        biops.append(simulate_biopsy(true_geno, a.coverage, a.seq_err, rng))
+
+    if a.method == "naive":
+        recs = [
+            hmm_recover(par_obs, ctx, *biops[e], a.seq_err)[0]
+            for e in range(a.n_embryos)
+        ]
+    elif a.method == "switch_aware":
+        recs = [
+            hmm_recover_switch_aware(
+                par_obs, *biops[e], a.seq_err,
+                switch_rate=max(a.switch_error_rate, 1e-4),
+            )[0]
+            for e in range(a.n_embryos)
+        ]
+    elif a.method == "joint":
+        _, dose, _, _ = joint_recover(
+            par_obs, biops, a.seq_err,
+            switch_rate=max(a.switch_error_rate, 1e-4), n_iter=2,
+        )
+        recs = list(dose)
+    else:
+        raise ValueError(f"unknown --method {a.method}")
+
+    emb = []
+    for e in range(a.n_embryos):
+        rec_geno = recs[e]
         emb.append(
             (
-                int((true_geno == rec_geno).sum()),
+                int((truths[e] == np.round(rec_geno)).sum()),
                 M,
-                score(true_geno, pgs),
+                score(truths[e], pgs),
                 score(rec_geno, pgs),
             )
         )
@@ -273,6 +308,20 @@ def main():
         help="mean sequencing depth of the biopsy",
     )
     ap.add_argument("--seq-err", type=float, default=0.01)
+    ap.add_argument(
+        "--switch-error-rate",
+        type=float,
+        default=0.0,
+        help="parental phasing switch-error rate per consecutive het "
+        "(0 = perfect phase; 0.005–0.02 is realistic for statistical phasing)",
+    )
+    ap.add_argument(
+        "--method",
+        choices=["naive", "switch_aware", "joint"],
+        default="naive",
+        help="naive = original 4-state HMM; switch_aware = same HMM with "
+        "inflated transition prior; joint = 2^E-state HMM pooling all embryos",
+    )
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
@@ -282,6 +331,7 @@ def main():
     print(
         f"parents {args.father} × {args.mother} ({args.pop}), "
         f"{args.n_embryos} embryos, {args.coverage}× biopsy, "
+        f"SER={args.switch_error_rate}, method={args.method}, "
         f"chroms {chroms[0]}..{chroms[-1]}",
         file=sys.stderr,
     )
@@ -356,7 +406,7 @@ def main():
     print(f"\n{'=' * 100}")
     print(
         f"PGS spread across {args.n_embryos} embryos "
-        f"(chr{args.chrom} contribution only)"
+        f"(chr{chroms[0]} contribution only)"
     )
     print(f"{'=' * 100}")
     print(
