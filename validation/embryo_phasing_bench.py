@@ -1,6 +1,6 @@
 """Benchmark embryo-genome imputation under realistic parental phasing error.
 
-The original demo (embryo_selection_demo.py) assumes the parents'
+The embryo demo (`genepred embryo-demo`) originally assumed the parents'
 haplotypes are perfectly phased. In practice they are phased
 statistically, which introduces *switch errors* — points where the
 hap0/hap1 labels flip. At a switch-error rate (SER) of 1 % per
@@ -21,7 +21,7 @@ This script measures that damage and compares three recoveries:
                 parental switches from embryo-specific recombination,
                 with forward-backward posterior decoding and
                 coordinate-ascent between the two parents
-                (embryo.joint_recover).
+                (genepred.embryo.joint_recover).
 
 For each (SER, coverage, n_embryos) cell it reports:
   - genotype concordance at informative (parent-het) sites
@@ -30,7 +30,7 @@ For each (SER, coverage, n_embryos) cell it reports:
     and Spearman rank correlation (selection fidelity)
 
 Run from the repo root:
-    python examples/embryo_phasing_bench.py --chroms 22 --reps 3
+    python validation/embryo_phasing_bench.py --chroms 22 --reps 3
 """
 
 from __future__ import annotations
@@ -39,13 +39,11 @@ import argparse
 import sys
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).parent))
-import embryo as E  # noqa: E402,I001
-from genepred.io import parse_chroms  # noqa: E402
+from genepred import embryo as E
+from genepred.io import parse_chroms
 
 
 @dataclass
@@ -91,6 +89,7 @@ def run_cell(
     rep: int,
     seq_err: float,
     methods: list[str],
+    n_sibs: int = 0,
 ):
     rng_sw = np.random.default_rng((101, rep, int(ser * 1e6)))
     par_obs, _, _ = E.apply_switch_errors(par_true, ser, rng_sw)
@@ -104,6 +103,15 @@ def run_cell(
             E.simulate_biopsy(
                 g, cov, seq_err, np.random.default_rng((303, rep, e, int(cov * 1e6)))
             )
+        )
+
+    # Born siblings: extra children of the same couple at 30× — appended
+    # to the joint HMM so their reads pin the parental switch track.
+    sib_biop: list[tuple[np.ndarray, np.ndarray]] = []
+    for s in range(n_sibs):
+        sg, _, _ = E.simulate_child(par_true, np.random.default_rng((404, rep, s)))
+        sib_biop.append(
+            E.simulate_biopsy(sg, 30.0, seq_err, np.random.default_rng((505, rep, s)))
         )
 
     true_pgs = _score_all(truth.astype(np.float64), pgs)
@@ -131,9 +139,11 @@ def run_cell(
                 ]
             ).astype(np.float64)
         elif m == "joint":
-            _, rec, _, _ = E.joint_recover(
-                par_obs, biop, seq_err, switch_rate=max(ser, 1e-4), n_iter=2
+            _, rec, _, _, _ = E.joint_recover(
+                par_obs, biop + sib_biop, seq_err,
+                switch_rate=max(ser, 1e-4), n_iter=2,
             )
+            rec = rec[:n_emb]
         elif m == "rephase":
             rec, _, _, _ = E.joint_rephase_recover(
                 par_obs, biop, seq_err, switch_rate=max(ser, 1e-4)
@@ -174,6 +184,12 @@ def main():
     )
     ap.add_argument("--cov", default="0.005,0.02,0.05,0.1")
     ap.add_argument("--n-embryos", default="3,5,8")
+    ap.add_argument(
+        "--n-sibs",
+        type=int,
+        default=0,
+        help="number of born siblings (30× WGS) appended to the joint HMM",
+    )
     ap.add_argument("--reps", type=int, default=3)
     ap.add_argument("--seq-err", type=float, default=0.01)
     ap.add_argument(
@@ -226,7 +242,7 @@ def main():
                     for rep in range(args.reps):
                         for m, conc, rmse, r2, rk, wall in run_cell(
                             par, pgs, het_mask, ser, cov, ne, rep,
-                            args.seq_err, methods,
+                            args.seq_err, methods, args.n_sibs,
                         ):
                             key = (m, ser, cov, ne)
                             if key not in results:

@@ -114,10 +114,27 @@ Michigan path.
 This produces a report like [embryo report](https://htmlpreview.github.io/?https://github.com/dawndrain/genetic_prediction/blob/main/docs/embryo_report.html)
 
 ```bash
-python examples/embryo_selection_demo.py --pop CEU --n-embryos 5
+genepred embryo-demo --pop CEU --n-embryos 5 --chroms 1-22
+# or: python -m genepred.embryo_cli ...
 ```
 
-todo: how to get a similar report for real embryos
+The default assumes perfectly-phased parents, which is unrealistic.
+At a typical statistical-phasing switch-error rate of ~1 % the naive
+HMM's PGS recovery drops to r² ≈ 0.4; a joint multi-embryo HMM
+recovers r² ≈ 0.9, and a single genotyped relative gets you back to
+≈ 1.0. See **[docs/PHASING.md](docs/PHASING.md)** for the full
+analysis and `--switch-error-rate` / `--method joint` for the
+realistic path:
+
+```bash
+genepred embryo-demo --pop CEU --n-embryos 5 \
+    --switch-error-rate 0.01 --method joint
+```
+
+The numbers in PHASING.md are reproduced by
+`validation/embryo_phasing_bench.py` (simulation sweep) and
+`validation/embryo_phasing_validate.py` (real-data SER measurement
+on a 1KG trio via SHAPEIT5).
 
 ## Layout
 

@@ -1,6 +1,17 @@
-Validation against openSNP self-reported phenotypes (height, BMI,
-education years, IQ, SAT). Results are summarised in the top-level
-README; users don't need to run these.
+Validation scripts. Results are summarised in the top-level README
+and in `docs/PHASING.md`; users don't need to run these.
+
+### Embryo-imputation phasing error (`docs/PHASING.md`)
+
+```bash
+python validation/embryo_phasing_bench.py     # simulation sweep:
+                                               #   SER × cov × n_embryos × method
+python validation/embryo_phasing_validate.py  # real-data SER of 1KG phase via a
+                                               #   SHAPEIT5 trio (needs
+                                               #   tools/shapeit5/phase_common_static)
+```
+
+### PGS accuracy against openSNP self-reported phenotypes
 
 ```bash
 ./download_opensnp_archives.sh     # openSNP IA + Zenodo archives (~25 GB)

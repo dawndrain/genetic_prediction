@@ -1,0 +1,188 @@
+# Embryo imputation under realistic parental phasing
+
+`genepred embryo-demo` originally assumed the parents' haplotypes
+are perfectly phased. They aren't. This note documents how badly that
+assumption breaks the imputation, what to do about it, and how to
+reproduce the numbers.
+
+## TL;DR
+
+- At a realistic switch-error rate of 1 % per consecutive het, the
+  original 4-state HMM's PGS recovery drops from r² ≈ 1.0 to **r² ≈
+  0.38** at 0.05× biopsy coverage — embryo selection becomes barely
+  better than random.
+- Pooling all embryos in a single 2^E-state HMM (`joint_recover`)
+  recovers **r² ≈ 0.92** at 0.05× with 5 embryos.
+- Adding **one genotyped relative** (a born sibling, or trio-phasing
+  the parents from grandparents) takes any method back to r² ≈ 0.99.
+- 0.005× coverage is below the useful floor for *any* method unless
+  you have a relative.
+
+## The problem
+
+Statistical phasers (Beagle, Eagle, SHAPEIT) produce a switch error —
+the hap0/hap1 labels flip — at roughly 0.3–2 % of consecutive
+heterozygous pairs depending on panel size and ancestry. A parent
+with ~28 k hets on chr22 at SER = 1 % has ~280 switches, versus ~1
+meiotic crossover. The 4-state HMM's recombination prior (~10⁻⁸/bp)
+is two orders of magnitude too tight to follow that many flips, so it
+mis-tracks the inheritance path over long stretches and reconstructs
+the wrong embryo genotype.
+
+## Benchmark results
+
+chr22, 1KG-CEU parents, 5 embryos, sequencing error 1 %, 8 replicates,
+het-site genotype concordance / mean PGS r²(true, imputed) over 8
+scores. Reproduce with:
+
+```bash
+python validation/embryo_phasing_bench.py --chroms 22 \
+    --ser 0,0.005,0.01,0.02 --cov 0.005,0.05 --n-embryos 5 --reps 8
+```
+
+| method @ SER=1% | 0.005× cov | 0.05× cov |
+|---|---|---|
+| oracle (perfect phase) | 97.97 % / 0.93 | 99.86 % / 1.00 |
+| **naive 4-state HMM** | 49.5 % / 0.23 | 62.8 % / **0.38** |
+| switch-aware single | 52.8 % / 0.28 | 71.0 % / 0.46 |
+| **joint 2^E HMM** | 64.4 % / 0.46 | **91.9 % / 0.92** |
+| joint + 1 born sibling | **97.7 % / 0.93** | **99.7 % / 0.99** |
+
+The sibling row: `--n-sibs 1 --methods oracle,naive,joint`.
+
+Scaling with embryo count (joint method, SER=1%, het-conc):
+
+| n_embryos | 0.005× | 0.02× | 0.05× | 0.1× |
+|---|---|---|---|---|
+| 3 | 60.9 % | 76.9 % | 87.5 % | 93.1 % |
+| 5 | 64.7 % | 82.6 % | 91.8 % | 95.6 % |
+| 8 | ~68 % | ~87 % | ~94 % | ~97 % |
+
+```bash
+python validation/embryo_phasing_bench.py --chroms 22 --ser 0.01 \
+    --cov 0.005,0.02,0.05,0.1 --n-embryos 3,5,8 --reps 3
+```
+
+**Rule of thumb.** Define R = (coverage × n_embryos) / SER, the pooled
+embryo reads per parental switch interval. R ≳ 50 → near-oracle;
+R ≈ 25 → good (selection works); R ≲ 5 → unreliable.
+
+## Recommended fixes, in order of impact
+
+### 1. Get a relative (best)
+
+Any of these drives the effective SER to ≈0 and makes the simple
+per-embryo HMM sufficient:
+
+- **Grandparents on a side**: trio-phase that parent with SHAPEIT5
+  `--pedigree`, listing the *parent* as the child row and the
+  grandparents as father/mother (`genepred/impute/shapeit.py` wraps
+  this; ~5 min/chr22 with the 1KG panel as reference). One
+  grandparent works too (use `NA` for the other). SHAPEIT5's
+  pedigree mode only scaffolds the *child* row — it does **not**
+  back-propagate to correct founders — so this is the right tool
+  iff you have the parent's parents. The bare Mendelian rule
+  (`genepred.embryo.trio_phase`) resolves ~79 % of hets perfectly but the
+  unfilled ~21 % cap het-conc at ~88 %; use SHAPEIT, not the bare
+  rule, in production.
+- **An existing child of the couple**: SHAPEIT5 will *not* use a
+  child to correct the parents. Instead, append the child to the
+  joint HMM as a 30× "embryo" (`validation/embryo_phasing_bench.py --n-sibs 1`).
+  Three lines of code, takes het-conc from 92 % → 99.7 % at 0.05×
+  and from 60 % → 98 % at 0.005×. **This is the single biggest
+  lever** and needs no external binaries. The published alternative
+  is duoHMM (O'Connell 2014, https://github.com/jaredo/duohmm), a
+  post-processor that corrects *all* members of an arbitrary
+  pedigree jointly — so it also covers the grandparent case and
+  any mix of relatives, at the cost of building against Boost.
+- **A sibling of a parent (aunt/uncle)**: duoHMM handles this via
+  the pedigree; SHAPEIT5's pedigree mode does not.
+
+The 1KG phase-3 main release we ship is unrelated-only by design, so
+the default test parents (NA06984/NA06985) have no relatives in it.
+Real trio members (e.g. NA12878's parents NA12891/NA12892) are in the
+separate `related_samples` VCFs — see `genepred/impute/shapeit.py` for
+the download path.
+
+### 2. Long-read or Strand-seq the parents
+
+PacBio HiFi / Nanopore at ~30× gives read-backed phase blocks of
+5–50 Mb (SER ≪ 0.1 %), at which point R ≫ 50 even for a single
+embryo at 0.01×. WhatsHap (`--ped` for hybrid trio+read phasing) is the
+standard tool. This is what Orchid does.
+
+### 3. Bigger reference panel (purely statistical)
+
+If no relatives and no long reads, phase the parents against the
+largest panel you can:
+
+| panel | size | EUR SER | how |
+|---|---|---|---|
+| 1KG | ~2.5 k | ~1 % | already wired (`genepred/impute/beagle.py`) |
+| HRC | ~32 k | ~0.3 % | Michigan Imputation Server (already wired) |
+| TOPMed | ~97 k | ~0.1 % | same API at `imputation.biodatacatalyst.nhlbi.nih.gov` — point `genepred/impute/michigan.py:API` there with a BioData Catalyst token |
+| UK Biobank | ~500 k | <0.1 % | approved-application only |
+
+At TOPMed-class SER (~0.1 %), 5 embryos at 0.05× gives R ≈ 250 and
+even the naive HMM is fine; non-EUR ancestry sees less benefit
+because panel coverage is thinner.
+
+### 4. Algorithmic — `joint_recover`
+
+If you're stuck with statistical phasing and no relatives, run
+`genepred.embryo.joint_recover` over all embryos instead of `hmm_recover` per
+embryo. It models each parent's switch track as shared across embryos
+(rate `switch_rate`) and each embryo's recombination as independent
+(rate `recomb_per_bp`), runs forward-backward over the 2^E joint
+state, and returns posterior dosage with per-site variance. State
+space is 2^E so it's practical to ~10–12 embryos; the function will
+warn at E>8 and refuse at E>12. The demo's `--method joint` flag
+selects it.
+
+## Real-data check
+
+Running SHAPEIT5 `--pedigree` on the PUR trio (HG00731 × HG00732 →
+HG00733; child from the 1KG `related_samples` VCF) and comparing the
+child's transmitted haplotype to the parents' 1KG-published phase
+gives a direct measurement of that phase's switch-error rate:
+
+| parent | het sites (chr22) | transitions | implied SER |
+|---|---|---|---|
+| HG00731 | 31,181 | 594 | ~1.9 % |
+| HG00732 | 33,448 | 529 | ~1.6 % |
+
+About half of these are point flips (median inter-switch gap = 2
+hets) rather than long-range switches; the long-range component is
+roughly 0.5–1 %. PUR is admixed, so this is on the high side; EUR
+samples with the same panel land closer to 0.5 %. Either way, the
+1KG phase that the original demo treated as ground truth is squarely
+in the regime where the naive HMM fails.
+
+Reproduce (~5 min on chr22; downloads the related-samples VCF and
+runs SHAPEIT5 — needs `tools/shapeit5/phase_common_static`):
+
+```bash
+python validation/embryo_phasing_validate.py --trio PUR --chrom 22
+```
+
+Other trios: `--trio YRI` (NA19240), `KHV`, `CHS`, `MXL`.
+
+## Caveats on the simulation
+
+The error model is simplified: switch errors are i.i.d. per het pair
+(the real-data check above shows ~half are actually single-site point
+flips, and the rest cluster in low-LD regions), parents are perfectly
+genotyped, and the biopsy is clean Poisson coverage with no allelic
+dropout or WGA bias. Real PGT-A data is harder, so treat the absolute
+concordances above as upper bounds; the relative ordering of methods
+should be robust.
+
+## References
+
+- Handyside et al. 2010, *J Med Genet* — Karyomapping
+- Zamani Esteki et al. 2015, *AJHG* — Haplarithmisis
+- Kumar et al. 2015, *Genome Med* — embryo WGS reconstruction with relatives
+- Backenroth et al. 2019, *Genet Med* — Haploseek (per-embryo HMM)
+- Masset et al. 2022, *NAR* — Hopla (multi-embryo linkage)
+- O'Connell et al. 2014, *PLoS Genet* — duoHMM
+- Hofmeister et al. 2023, *Nat Genet* — SHAPEIT5

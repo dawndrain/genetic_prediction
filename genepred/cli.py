@@ -20,6 +20,7 @@ import click
 
 from genepred import qaly as _qaly
 from genepred.catalog import CURATED, ensure_weights
+from genepred.embryo_cli import main as _embryo_main
 from genepred.impute import beagle as _beagle
 from genepred.impute import michigan as _mich
 from genepred.scoring import format_report, format_results, score_genome
@@ -317,6 +318,21 @@ def cli_traits():
     click.echo(f"  {'trait':<26} {'PGS ID':<11} {'variants':>10} {'EUR R²':>8}")
     for k, s in CURATED.items():
         click.echo(f"  {k:<26} {s.pgs_id:<11} {s.n_variants:>10,} {s.r2_eur_pop:>8.3f}")
+
+
+@main.command(
+    "embryo-demo",
+    context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
+)
+@click.pass_context
+def cli_embryo_demo(ctx):
+    """End-to-end PGT-P simulation: 1KG parents → meiosis → biopsy →
+    HMM recovery → PGS → ΔQALY ranking. See docs/PHASING.md for the
+    --switch-error-rate / --method flags.
+
+    All options are forwarded to genepred.embryo_cli; use
+    `python -m genepred.embryo_cli --help` for the full list."""
+    _embryo_main(ctx.args)
 
 
 if __name__ == "__main__":

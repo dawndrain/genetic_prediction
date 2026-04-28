@@ -18,12 +18,15 @@ HMM bridges the gap by exploiting that recombination is rare.
      read off the path + parental haplotypes.
 
 Functions here are library-grade; the genome-wide demo orchestration
-lives in `genepred.cli:embryo_demo`.
+lives in `genepred.embryo_cli` (CLI: `genepred embryo-demo`); the
+phasing-error benchmark and real-data validation are under
+`validation/`. See docs/PHASING.md for the full writeup.
 """
 
 from __future__ import annotations
 
 import gzip
+import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -90,7 +93,7 @@ def pick_parents(pop: str = "CEU") -> tuple[str, str]:
 
 def load_parents(chrom: str, father: str, mother: str) -> Parents:
     """Load phased haplotypes for two samples from the 1KG VCF."""
-    vcf = next(kg_dir().glob(f"ALL.chr{chrom}.*.vcf.gz"))
+    vcf = next(kg_dir().glob(f"ALL.chr{chrom}.phase3_*v5b.*.genotypes.vcf.gz"))
     pos, ref, alt, pat, mat = [], [], [], [], []
     fc = mc = -1
     with gzip.open(vcf, "rt") as f:
@@ -183,6 +186,47 @@ def apply_switch_errors(
     pat_obs, pat_swap = _inject_switches(par.pat, ser, rng)
     mat_obs, mat_swap = _inject_switches(par.mat, ser, rng)
     return replace(par, pat=pat_obs, mat=mat_obs), pat_swap, mat_swap
+
+
+def trio_phase(
+    child_geno: np.ndarray,
+    gp1_geno: np.ndarray | None,
+    gp2_geno: np.ndarray | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Mendelian phasing of `child_geno` (the embryo's parent) from
+    one or both of *their* parents' unphased genotypes (dosage 0/1/2).
+
+    At each het site of the child where at least one grandparent is
+    homozygous, the parent-of-origin of each allele is determined.
+    Resolves ~70–90 % of hets with zero switch errors; the remaining
+    sites (both grandparents het) are left as 0|1 — they are
+    individually ambiguous but, being scattered, do not introduce
+    long-range switches.
+
+    Returns (hap (2, M) int8 ordered [from-gp1, from-gp2], resolved (M,) bool)."""
+    M = len(child_geno)
+    hap = np.zeros((2, M), dtype=np.int8)
+    hom = (child_geno == 2).astype(np.int8)
+    hap[0] = hap[1] = hom
+    het = child_geno == 1
+    resolved = ~het
+
+    def hom_allele(g):
+        return None if g is None else np.where((g == 0) | (g == 2), g // 2, -1)
+
+    a1, a2 = hom_allele(gp1_geno), hom_allele(gp2_geno)
+    if a1 is not None:
+        m = het & (a1 >= 0)
+        hap[0, m] = a1[m]
+        hap[1, m] = 1 - a1[m]
+        resolved |= m
+    if a2 is not None:
+        m = het & ~resolved & (a2 >= 0)
+        hap[1, m] = a2[m]
+        hap[0, m] = 1 - a2[m]
+        resolved |= m
+    hap[1, het & ~resolved] = 1  # arbitrary 0|1 at unresolved hets
+    return hap, resolved
 
 
 # ------------------------------------------------------------------ meiosis
@@ -449,12 +493,6 @@ def _joint_one_parent(
     Returns (w_full (E, M) int8, p_w1 (E, M) float posterior, idx)."""
     M = this_hap.shape[1]
     E = len(biopsies)
-    if E > 12:
-        raise ValueError(
-            f"joint HMM has 2^E = {1 << E} states; E > 12 is impractical. "
-            f"Run on subsets and merge re-phased parents, or use "
-            f"hmm_recover_switch_aware per embryo."
-        )
     idx = np.flatnonzero(this_hap[0] != this_hap[1])
     K = len(idx)
     if K == 0:
@@ -575,9 +613,21 @@ def joint_recover(
     (`n_iter` rounds), each time conditioning on the other parent's
     current path estimate at doubly-heterozygous sites.
 
-    Returns (genos (E, M) int8, dosage (E, M) float, ppaths, mpaths)."""
+    Returns (genos, dosage, var_dose, ppaths, mpaths) each (E, M)."""
     M = len(par.pos)
     E = len(biopsies)
+    if E > 12:
+        raise ValueError(
+            f"joint_recover state space is 2^E = {1 << E} for E={E} embryos; "
+            f"this is intractable. Run on a subset of ≤8 to re-phase the "
+            f"parents (joint_rephase_recover), then hmm_recover per embryo."
+        )
+    if E > 8:
+        print(
+            f"[embryo] joint_recover with E={E} embryos → 2^{E}={1 << E} states; "
+            f"expect ~{(1 << (2 * (E - 5)))}× slower than E=5.",
+            file=sys.stderr,
+        )
     ar = np.arange(M)
     wp = wm = None
     pp1 = pm1 = None
@@ -592,15 +642,41 @@ def joint_recover(
         )
     genos = np.empty((E, M), dtype=np.int8)
     dosage = np.empty((E, M), dtype=np.float64)
+    var_dose = np.zeros((E, M), dtype=np.float64)
+    pat_het = (par.pat[0] != par.pat[1]).astype(np.float64)
+    mat_het = (par.mat[0] != par.mat[1]).astype(np.float64)
     for e in range(E):
         genos[e] = par.pat[wp[e], ar] + par.mat[wm[e], ar]
-        # E[dose] = E[pat allele] + E[mat allele]; at het sites the
-        # allele is Bernoulli on the path posterior, at hom sites it's
-        # fixed.
         ep = par.pat[0] * (1 - pp1[e]) + par.pat[1] * pp1[e]
         em = par.mat[0] * (1 - pm1[e]) + par.mat[1] * pm1[e]
         dosage[e] = ep + em
-    return genos, dosage, wp, wm
+        # Var[dose] = Var[pat allele] + Var[mat allele]; each is
+        # Bernoulli with p = path posterior, but only at that parent's
+        # het sites (hom sites contribute zero variance).
+        var_dose[e] = pp1[e] * (1 - pp1[e]) * pat_het + pm1[e] * (1 - pm1[e]) * mat_het
+    return genos, dosage, var_dose, wp, wm
+
+
+def score_with_uncertainty(
+    dosage: np.ndarray, var_dose: np.ndarray, pgs_map
+) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    """Per-embryo PGS point estimate and SE from posterior dosage.
+
+    SE assumes independent per-site errors, which underestimates the
+    true uncertainty because mis-called switch segments produce
+    correlated errors. Treat as a lower bound; for between-embryo
+    comparisons it's still informative because the correlated
+    component (the parental switch track) is shared and largely
+    cancels in differences.
+
+    Returns {pgs_id: (score (E,), se (E,))}."""
+    out: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    for pid, (idx, sgn, w) in pgs_map.items():
+        d = np.where(sgn[None, :] == 1, dosage[:, idx], 2 - dosage[:, idx])
+        score = (w[None, :] * d).sum(1)
+        se = np.sqrt((w[None, :] ** 2 * var_dose[:, idx]).sum(1))
+        out[pid] = (score, se)
+    return out
 
 
 def _switch_track_from_paths(w: np.ndarray, idx: np.ndarray, M: int) -> np.ndarray:

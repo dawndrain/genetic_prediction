@@ -35,12 +35,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent))
-
-from genepred import qaly as q  # noqa: E402,I001
-from genepred.catalog import CURATED  # noqa: E402
-from embryo import (  # noqa: E402
-    score_chrom as score,
+from genepred import qaly as q
+from genepred.catalog import CURATED
+from genepred.embryo import (
     apply_switch_errors,
     build_hmm_context,
     hmm_recover,
@@ -49,12 +46,13 @@ from embryo import (  # noqa: E402
     load_parents_cached,
     load_pgs_for_chrom,
     pick_parents,
+    score_chrom,
     simulate_biopsy,
     simulate_child,
 )
-from genepred.io import parse_chroms as _parse_chroms  # noqa: E402
-from genepred.paths import resource  # noqa: E402
-from genepred.qaly import liability_threshold_risk  # noqa: E402
+from genepred.io import parse_chroms as _parse_chroms
+from genepred.paths import resource
+from genepred.qaly import liability_threshold_risk
 
 _ARGS: argparse.Namespace  # set in main() before Pool fork; inherited by workers
 
@@ -64,7 +62,7 @@ def _do_chrom(chrom):
     par_true = load_parents_cached(chrom, a.father, a.mother)
     M = len(par_true.pos)
     pgs = load_pgs_for_chrom(chrom, par_true)
-    pmid = score((par_true.pat.sum(0) + par_true.mat.sum(0)) / 2, pgs)
+    pmid = score_chrom((par_true.pat.sum(0) + par_true.mat.sum(0)) / 2, pgs)
 
     rng_sw = np.random.default_rng((a.seed, int(chrom), 999))
     par_obs, _, _ = apply_switch_errors(par_true, a.switch_error_rate, rng_sw)
@@ -91,7 +89,7 @@ def _do_chrom(chrom):
             for e in range(a.n_embryos)
         ]
     elif a.method == "joint":
-        _, dose, _, _ = joint_recover(
+        _, dose, _, _, _ = joint_recover(
             par_obs, biops, a.seq_err,
             switch_rate=max(a.switch_error_rate, 1e-4), n_iter=2,
         )
@@ -106,8 +104,8 @@ def _do_chrom(chrom):
             (
                 int((truths[e] == np.round(rec_geno)).sum()),
                 M,
-                score(truths[e], pgs),
-                score(rec_geno, pgs),
+                score_chrom(truths[e], pgs),
+                score_chrom(rec_geno, pgs),
             )
         )
     return chrom, M, len(ctx.inf_idx), set(pgs), pmid, emb
@@ -269,8 +267,8 @@ def _write_html(detail, qaly_per_emb, best, n_emb, q, out="docs/embryo_report.ht
 {n_emb} embryos from 1KG CEU parents, 0.05× biopsy coverage, HMM-recovered
 genotypes scored on {len(detail)} traits. Rows are sorted by
 <b>expected selection impact</b> (SD of ΔQALY across embryos — traits where
-your choice matters most are at the top). Each cell: implied risk (diseases) 
-or trait shift in SD (continuous; ↑ marks traits where higher is better), 
+your choice matters most are at the top). Each cell: implied risk (diseases)
+or trait shift in SD (continuous; ↑ marks traits where higher is better),
 PGS z-score vs 1KG-EUR, and ΔQALY relative to the sibling mean. Cell shade
 is by <b>ΔQALY</b>:
 <span style="background:rgba(40,160,80,0.6)"></span> better than sib-mean,
@@ -292,7 +290,7 @@ methods demo on simulated data, not clinical guidance.
     print(f"\nHTML report → {out}", file=sys.stderr)
 
 
-def main():
+def main(argv: list[str] | None = None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--chroms", default="22", help="e.g. '22' or '1-22' or '1,5,22'")
     ap.add_argument("--father", default=None)
@@ -323,7 +321,7 @@ def main():
         "inflated transition prior; joint = 2^E-state HMM pooling all embryos",
     )
     ap.add_argument("--seed", type=int, default=0)
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     if not args.father or not args.mother:
         args.father, args.mother = pick_parents(args.pop)

@@ -5,9 +5,11 @@ Public surface:
     genepred.pca       project a genome onto 1KG ancestry PCs
     genepred.scoring   compute raw PGS, normalize to z, PC-adjust, QALY-annotated report
     genepred.catalog   curated PGS list + on-demand download
-    genepred.impute    Beagle (local) and Michigan (submit/fetch) backends
+    genepred.impute    Beagle, Michigan/TOPMed server, SHAPEIT5
     genepred.qaly      QALY model parameters and calculator
-    genepred.embryo    meiosis simulation + selection
+    genepred.embryo    meiosis + biopsy simulation, per-embryo and joint
+                       phase-aware HMM recovery, trio phasing
+    genepred.htslib_lite  pure-Python bgzip/tabix/BCF for bare installs
 
 CLI entry point: `genepred` (see cli.py).
 """
