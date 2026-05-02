@@ -128,17 +128,31 @@ def load_sample_pcs() -> list[tuple[str, str, list[float]]]:
     return out
 
 
+def admixture_fractions(
+    pcs: list[float], k_neighbors: int = 50, use_pcs: int = 4
+) -> dict[str, float]:
+    """Fraction of the k nearest 1KG samples in each super-population.
+
+    A crude PC-space proxy for global ancestry proportions — not a
+    proper admixture model (no LD, no per-locus ancestry), but enough
+    to interpolate population-level parameters like the cross-ancestry
+    r² attenuation for someone who doesn't fall cleanly into one
+    super-population."""
+    samples = load_sample_pcs()
+    dists = []
+    for _, sp, spc in samples:
+        d = sum((pcs[i] - spc[i]) ** 2 for i in range(min(use_pcs, len(pcs))))
+        dists.append((d, sp))
+    dists.sort()
+    votes = Counter(sp for _, sp in dists[:k_neighbors])
+    return {sp: n / k_neighbors for sp, n in votes.items()}
+
+
 def assign_population(
     pcs: list[float], k_neighbors: int = 25, use_pcs: int = 4
 ) -> tuple[str, float]:
     """Closest 1KG super-population by k-NN in the first `use_pcs` PCs.
     Returns (super_pop, fraction_of_neighbors_in_that_pop)."""
-    samples = load_sample_pcs()
-    dists = []
-    for sid, sp, spc in samples:
-        d = sum((pcs[i] - spc[i]) ** 2 for i in range(min(use_pcs, len(pcs))))
-        dists.append((d, sp))
-    dists.sort()
-    votes = Counter(sp for _, sp in dists[:k_neighbors])
-    pop, n = votes.most_common(1)[0]
-    return pop, n / k_neighbors
+    fr = admixture_fractions(pcs, k_neighbors, use_pcs)
+    pop = max(fr, key=lambda k: fr[k])
+    return pop, fr[pop]

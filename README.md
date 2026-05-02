@@ -136,6 +136,20 @@ The numbers in PHASING.md are reproduced by
 `validation/embryo_phasing_validate.py` (real-data SER measurement
 on a 1KG trio via SHAPEIT5).
 
+For **real** parent + embryo data (a phased parental VCF and one
+low-coverage VCF per embryo with FORMAT/AD allele depths):
+
+```bash
+genepred embryo-score \
+    --parent-vcf parents.phased.vcf.gz --father DAD_ID --mother MOM_ID \
+    --embryos e1.vcf.gz e2.vcf.gz e3.vcf.gz \
+    --switch-rate 0.001   # ~0.001 long-read/trio, ~0.01 statistical
+```
+
+This runs the joint phase-aware HMM, scores every curated PGS on the
+posterior dosage, and emits the same ΔQALY ranking plus a
+posterior-draw confidence ("embryo 2 is best in 94 % of draws").
+
 ## Layout
 
 ```

@@ -90,6 +90,8 @@ def run_cell(
     seq_err: float,
     methods: list[str],
     n_sibs: int = 0,
+    ado: float = 0.0,
+    cov_disp: float = 0.0,
 ):
     rng_sw = np.random.default_rng((101, rep, int(ser * 1e6)))
     par_obs, _, _ = E.apply_switch_errors(par_true, ser, rng_sw)
@@ -101,7 +103,8 @@ def run_cell(
         truth[e] = g
         biop.append(
             E.simulate_biopsy(
-                g, cov, seq_err, np.random.default_rng((303, rep, e, int(cov * 1e6)))
+                g, cov, seq_err, np.random.default_rng((303, rep, e, int(cov * 1e6))),
+                ado=ado, cov_dispersion=cov_disp,
             )
         )
 
@@ -142,6 +145,11 @@ def run_cell(
             _, rec, _, _, _ = E.joint_recover(
                 par_obs, biop + sib_biop, seq_err,
                 switch_rate=max(ser, 1e-4), n_iter=2,
+            )
+            rec = rec[:n_emb]
+        elif m == "joint_full":
+            _, rec, _, _, _ = E.joint_recover_full(
+                par_obs, biop + sib_biop, seq_err, switch_rate=max(ser, 1e-4),
             )
             rec = rec[:n_emb]
         elif m == "rephase":
@@ -189,6 +197,18 @@ def main():
         type=int,
         default=0,
         help="number of born siblings (30× WGS) appended to the joint HMM",
+    )
+    ap.add_argument(
+        "--ado",
+        type=float,
+        default=0.0,
+        help="allelic-dropout rate per het site (MDA ≈ 0.1–0.25; PTA ≈ 0.01–0.05)",
+    )
+    ap.add_argument(
+        "--cov-dispersion",
+        type=float,
+        default=0.0,
+        help="coverage CV from WGA amplification bias (MDA ≈ 0.5–1; 0 = Poisson)",
     )
     ap.add_argument("--reps", type=int, default=3)
     ap.add_argument("--seq-err", type=float, default=0.01)
@@ -243,6 +263,7 @@ def main():
                         for m, conc, rmse, r2, rk, wall in run_cell(
                             par, pgs, het_mask, ser, cov, ne, rep,
                             args.seq_err, methods, args.n_sibs,
+                            args.ado, args.cov_dispersion,
                         ):
                             key = (m, ser, cov, ne)
                             if key not in results:

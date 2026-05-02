@@ -34,11 +34,12 @@ from tqdm import tqdm
 from genepred.catalog import CURATED, list_weight_files
 from genepred.io import COMPLEMENT, load_genotypes
 from genepred.paths import open_maybe_gz, resource
-from genepred.pca import assign_population, load_pca, project
+from genepred.pca import admixture_fractions, load_pca, project
 from genepred.qaly import (
     ANCESTRY_R2_RATIO,
     CONTINUOUS_TRAITS,
     DISEASE_TRAITS,
+    interpolated_r2_ratio,
     liability_threshold_risk,
 )
 
@@ -319,9 +320,11 @@ def score_genome(
                 file=sys.stderr,
             )
 
-    if ref_pop is None and pcs is not None:
-        ref_pop, _ = assign_population(pcs)
-    ref_pop = ref_pop or "EUR"
+    admix: dict[str, float] = {}
+    if pcs is not None:
+        admix = admixture_fractions(pcs)
+    if ref_pop is None:
+        ref_pop = max(admix, key=lambda k: admix[k]) if admix else "EUR"
     ref_stats = load_reference(ref_pop)
     if verbose:
         print(f"  reference: {len(ref_stats)} scores ({ref_pop})", file=sys.stderr)
@@ -382,7 +385,13 @@ def score_genome(
             )
         )
 
-    meta = {"pcs": pcs, "super_pop": ref_pop, "n_snps": len(by_pos)}
+    meta = {
+        "pcs": pcs,
+        "super_pop": ref_pop,
+        "admixture": admix,
+        "r2_ratio": interpolated_r2_ratio(admix) if admix else ANCESTRY_R2_RATIO.get(ref_pop, 1.0),
+        "n_snps": len(by_pos),
+    }
     return results, meta
 
 
@@ -396,7 +405,7 @@ def _trait_pct(z: float, r2: float) -> tuple[float, float, float]:
 
 def format_results(results: list[ScoreResult], meta: dict) -> str:
     pop = meta["super_pop"]
-    ratio = ANCESTRY_R2_RATIO.get(pop, 1.0)
+    ratio = meta.get("r2_ratio", ANCESTRY_R2_RATIO.get(pop, 1.0))
     r2_by_id = {s.pgs_id: s.r2_eur_pop * ratio for s in CURATED.values()}
     tw = max(26, max((len(r.trait) for r in results), default=0))
     pw = max(11, max((len(r.pgs_id) for r in results), default=0))
@@ -524,12 +533,19 @@ def annotate(results: list[ScoreResult], ancestry_ratio: float = 1.0) -> dict:
 def format_report(results: list[ScoreResult], meta: dict, source: str = "") -> str:
     """Full text report for one genome."""
     pop = meta.get("super_pop", "EUR")
-    ratio = ANCESTRY_R2_RATIO.get(pop, 1.0)
+    ratio = meta.get("r2_ratio", ANCESTRY_R2_RATIO.get(pop, 1.0))
+    admix = meta.get("admixture", {})
     a = annotate(results, ancestry_ratio=ratio)
+    admix_str = (
+        " (" + ", ".join(f"{p} {f:.0%}" for p, f in sorted(admix.items(), key=lambda kv: -kv[1])) + ")"
+        if len(admix) > 1
+        else ""
+    )
     L = []
     L += [
         f"PGS report{f' for {source}' if source else ''}",
-        f"reference: 1KG {pop}  |  {meta.get('n_snps', 0):,} genotyped SNPs",
+        f"reference: 1KG {pop}{admix_str}  |  r² scaled by {ratio:.2f}  |  "
+        f"{meta.get('n_snps', 0):,} genotyped SNPs",
         "Population-level interpretation; ΔQALY/Δ$ vs population mean.",
         "",
     ]

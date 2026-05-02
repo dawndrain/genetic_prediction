@@ -56,6 +56,26 @@ ANCESTRY_R2_RATIO: dict[str, float] = {
 }
 
 
+def interpolated_r2_ratio(fractions: dict[str, float]) -> float:
+    """r²-attenuation ratio for an admixed individual.
+
+    `fractions` is a super-pop → proportion mapping (e.g. from
+    pca.admixture_fractions()). Empirically the loss of PGS accuracy
+    scales roughly linearly with genetic distance from the training
+    population, and admixed individuals fall in between — Bitarello &
+    Mathieson (2020) and Cavazos & Witte (2021) both find approximately
+    linear interpolation in admixture proportion. So we take the
+    fraction-weighted mean of the per-population ratios. Unknown labels
+    contribute the most conservative (AFR) value rather than EUR."""
+    if not fractions:
+        return 1.0
+    floor = min(ANCESTRY_R2_RATIO.values())
+    tot = sum(fractions.values())
+    return sum(
+        ANCESTRY_R2_RATIO.get(p, floor) * f for p, f in fractions.items()
+    ) / max(tot, 1e-9)
+
+
 @dataclass
 class DiseaseTrait(_PGSTrait):
     """A binary disease trait scored by PGS."""

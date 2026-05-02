@@ -43,7 +43,39 @@ from pathlib import Path
 from genepred.io import bgzf_compress, load_genotype_by_chrom, parse_chroms
 from genepred.paths import find_tool, kg_dir
 
-API = "https://imputationserver.sph.umich.edu/api/v2"
+SERVERS = {
+    "michigan": {
+        "api": "https://imputationserver.sph.umich.edu/api/v2",
+        "app": "imputationserver2",
+        "default_panel": "apps@hrc-r1.1",
+        "token_env": "MICHIGAN_API_TOKEN",
+        "token_file": ".michigan_token",
+        "signup": "https://imputationserver.sph.umich.edu",
+    },
+    # Same Cloudgene software, hosted on NHLBI BioData Catalyst with the
+    # ~97k-WGS TOPMed r3 panel. Separate account + token.
+    "topmed": {
+        "api": "https://imputation.biodatacatalyst.nhlbi.nih.gov/api/v2",
+        "app": "imputationserver@2.0.0",
+        "default_panel": "apps@topmed-r3",
+        "token_env": "TOPMED_API_TOKEN",
+        "token_file": ".topmed_token",
+        "signup": "https://imputation.biodatacatalyst.nhlbi.nih.gov",
+    },
+}
+API = SERVERS["michigan"]["api"]
+_SERVER = "michigan"
+
+
+def set_server(name: str) -> None:
+    """Select 'michigan' (HRC/1KG/CAAPA panels) or 'topmed' (TOPMed r3,
+    ~97k WGS — best EUR phasing and the only good option for AFR/admixed
+    samples). Same submit/poll/fetch flow; different host and token."""
+    global API, _SERVER
+    if name not in SERVERS:
+        raise ValueError(f"unknown server {name!r}; choose from {list(SERVERS)}")
+    _SERVER = name
+    API = SERVERS[name]["api"]
 
 
 # ----------------------------------------------------------------- VCF prep
@@ -168,16 +200,17 @@ def prepare(
 
 
 def _token(explicit: str | None = None) -> str:
-    tok = explicit or os.environ.get("MICHIGAN_API_TOKEN")
+    srv = SERVERS[_SERVER]
+    tok = explicit or os.environ.get(srv["token_env"])
     if not tok:
-        tf = Path.home() / ".michigan_token"
+        tf = Path.home() / srv["token_file"]
         if tf.exists():
             tok = tf.read_text().strip()
     if not tok:
         raise RuntimeError(
-            "Michigan API token required. Set MICHIGAN_API_TOKEN or write "
-            "~/.michigan_token. Get one at "
-            "https://imputationserver.sph.umich.edu (Account → API Token)."
+            f"{_SERVER} API token required. Set {srv['token_env']} or "
+            f"write ~/{srv['token_file']}. Get one at {srv['signup']} "
+            f"(Account → API Token)."
         )
     return tok
 
@@ -210,7 +243,7 @@ def _api_post(files, token, refpanel, population, job_name) -> dict:
         body += fp.read_bytes() + b"\r\n"
     body += f"--{boundary}--\r\n".encode()
     req = urllib.request.Request(
-        f"{API}/jobs/submit/imputationserver2",
+        f"{API}/jobs/submit/{SERVERS[_SERVER]['app']}",
         data=body,
         headers={
             "X-Auth-Token": token,
@@ -249,17 +282,27 @@ def submit(
     genotype_files: list,
     out_dir: Path,
     *,
-    refpanel: str = "apps@hrc-r1.1",
+    server: str | None = None,
+    refpanel: str | None = None,
     population: str = "mixed",
     job_name: str | None = None,
     holdout_frac: float = 0.0,
     token: str | None = None,
 ) -> str:
-    """Prepare VCFs, upload, and persist job state. Returns job_id."""
+    """Prepare VCFs, upload, and persist job state. Returns job_id.
+
+    server: 'michigan' (HRC/1KG/CAAPA) or 'topmed' (TOPMed r3).
+    refpanel: defaults to the server's primary panel."""
+    if server:
+        set_server(server)
+    refpanel = refpanel or SERVERS[_SERVER]["default_panel"]
     out_dir = Path(out_dir)
     tok = _token(token)
     files = prepare(genotype_files, out_dir, holdout_frac=holdout_frac)
-    print(f"[michigan] uploading {len(files)} files to {API} ...", file=sys.stderr)
+    print(
+        f"[{_SERVER}] uploading {len(files)} files to {API} (panel={refpanel}) …",
+        file=sys.stderr,
+    )
     resp = _api_post(files, tok, refpanel, population, job_name or out_dir.name)
     if not resp.get("success"):
         raise RuntimeError(f"submission failed: {resp}")

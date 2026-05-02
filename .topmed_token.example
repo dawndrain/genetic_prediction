@@ -1,0 +1,14 @@
+# API token for the TOPMed Imputation Server (NHLBI BioData Catalyst).
+#
+# 1. Sign up (free) at https://imputation.biodatacatalyst.nhlbi.nih.gov
+# 2. Account → Profile → API Access → Create token
+# 3. Save the token to ~/.topmed_token (one line, no quotes),
+#    or export TOPMED_API_TOKEN=<token>.
+#
+# Do NOT commit the real token — it grants download access to every
+# genome you've uploaded. .topmed_token is already in .gitignore.
+#
+# This is the panel to use for AFR / admixed samples (and the best
+# option for everyone, really — ~97k WGS, lowest phasing switch-error
+# rate). Same API as Michigan; select with
+#   genepred impute michigan submit --server topmed ...

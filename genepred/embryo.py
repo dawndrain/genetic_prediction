@@ -30,6 +30,7 @@ import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+import numba as nb
 import numpy as np
 
 from genepred.paths import data_dir, kg_dir, pgs_weights_dir
@@ -89,6 +90,110 @@ def pick_parents(pop: str = "CEU") -> tuple[str, str]:
             if r[1] == pop:
                 (males if r[3] == "male" else females).append(r[0])
     return males[0], females[0]
+
+
+def load_parents_vcf(
+    vcf: Path | str, chrom: str, father: str, mother: str
+) -> Parents:
+    """Load phased haplotypes for two named samples from any VCF.
+
+    Keeps biallelic SNPs on `chrom` where both samples are phased
+    (`a|b`). The VCF should already be phased — via SHAPEIT5,
+    Beagle, long-read WhatsHap, or trio phasing — since the embryo
+    HMM relies on the parental haplotype labels being consistent."""
+    pos, ref, alt, pat, mat = [], [], [], [], []
+    fc = mc = -1
+    want = chrom.lstrip("chr")
+    with gzip.open(vcf, "rt") if str(vcf).endswith(".gz") else open(vcf) as f:
+        for line in f:
+            if line.startswith("##"):
+                continue
+            if line.startswith("#CHROM"):
+                hdr = line.rstrip().split("\t")
+                fc, mc = hdr.index(father), hdr.index(mother)
+                continue
+            r = line.rstrip().split("\t")
+            if r[0].lstrip("chr") != want:
+                continue
+            if len(r[3]) != 1 or len(r[4]) != 1 or "," in r[4]:
+                continue
+            fg, mg = r[fc], r[mc]
+            if len(fg) < 3 or len(mg) < 3 or fg[1] != "|" or mg[1] != "|":
+                continue
+            pos.append(int(r[1]))
+            ref.append(r[3])
+            alt.append(r[4])
+            pat.append((int(fg[0]), int(fg[2])))
+            mat.append((int(mg[0]), int(mg[2])))
+    if not pos:
+        raise ValueError(
+            f"no phased biallelic SNPs on chr{chrom} for {father}/{mother} in {vcf}"
+        )
+    return Parents(
+        chrom=want,
+        pos=np.array(pos, dtype=np.int64),
+        ref=np.array(ref, dtype="<U1"),
+        alt=np.array(alt, dtype="<U1"),
+        pat=np.array(pat, dtype=np.int8).T,
+        mat=np.array(mat, dtype=np.int8).T,
+    )
+
+
+def load_embryo_reads(
+    vcf: Path | str, par: Parents, sample: str | None = None
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-site (n_ref, n_alt) read counts at the parents' SNP
+    positions from a low-coverage embryo VCF.
+
+    Reads the FORMAT/AD field (ref,alt depth) where present;
+    falls back to RO/AO. Sites in `par` not present in the embryo
+    VCF get (0, 0). REF/ALT are checked against the parents and
+    swapped if reversed; mismatches are dropped."""
+    M = len(par.pos)
+    n_ref = np.zeros(M, dtype=np.int64)
+    n_alt = np.zeros(M, dtype=np.int64)
+    pos2i = {int(p): i for i, p in enumerate(par.pos)}
+    want = par.chrom
+    sc = -1
+    fmt_ad = fmt_ro = fmt_ao = -1
+    with gzip.open(vcf, "rt") if str(vcf).endswith(".gz") else open(vcf) as f:
+        for line in f:
+            if line.startswith("##"):
+                continue
+            if line.startswith("#CHROM"):
+                hdr = line.rstrip().split("\t")
+                sc = hdr.index(sample) if sample else 9
+                continue
+            r = line.rstrip().split("\t")
+            if r[0].lstrip("chr") != want:
+                continue
+            i = pos2i.get(int(r[1]))
+            if i is None:
+                continue
+            fmt = r[8].split(":")
+            if fmt_ad < 0 and "AD" in fmt:
+                fmt_ad = fmt.index("AD")
+            if fmt_ro < 0 and "RO" in fmt:
+                fmt_ro = fmt.index("RO")
+                fmt_ao = fmt.index("AO") if "AO" in fmt else -1
+            cell = r[sc].split(":")
+            nr = na = 0
+            if 0 <= fmt_ad < len(cell):
+                ad = cell[fmt_ad].split(",")
+                if len(ad) >= 2 and ad[0] != ".":
+                    nr, na = int(ad[0]), int(ad[1])
+            elif 0 <= fmt_ro < len(cell):
+                nr = int(cell[fmt_ro]) if cell[fmt_ro] != "." else 0
+                na = (
+                    int(cell[fmt_ao].split(",")[0])
+                    if 0 <= fmt_ao < len(cell) and cell[fmt_ao] != "."
+                    else 0
+                )
+            if r[3] == par.ref[i] and r[4] == par.alt[i]:
+                n_ref[i], n_alt[i] = nr, na
+            elif r[3] == par.alt[i] and r[4] == par.ref[i]:
+                n_ref[i], n_alt[i] = na, nr
+    return n_ref, n_alt
 
 
 def load_parents(chrom: str, father: str, mother: str) -> Parents:
@@ -261,11 +366,40 @@ def simulate_child(par: Parents, rng: np.random.Generator):
 
 
 def simulate_biopsy(
-    geno: np.ndarray, coverage: float, err: float, rng: np.random.Generator
+    geno: np.ndarray,
+    coverage: float,
+    err: float,
+    rng: np.random.Generator,
+    *,
+    ado: float = 0.0,
+    cov_dispersion: float = 0.0,
 ):
-    """Per-SNP (n_ref, n_alt) read counts at the given mean coverage."""
-    n_reads = rng.poisson(coverage, size=len(geno))
-    p_alt = geno / 2 * (1 - err) + (1 - geno / 2) * err
+    """Per-SNP (n_ref, n_alt) read counts after whole-genome
+    amplification of a few-cell trophectoderm biopsy.
+
+    coverage: mean depth after WGA.
+    err: per-base sequencing error.
+    ado: allelic-dropout probability per heterozygous site — one of
+        the two alleles fails to amplify and all reads at that site
+        come from the surviving allele. MDA-based WGA gives ~10–25 %;
+        MALBAC and PTA are lower (~1–5 %). The default 0 reproduces
+        the original idealised model.
+    cov_dispersion: extra per-site coverage variance from amplification
+        bias, expressed as the coefficient of variation of a Gamma
+        multiplier (so the marginal read count is negative-binomial).
+        MDA typically has CV ≈ 0.5–1; 0 = plain Poisson."""
+    M = len(geno)
+    eff = geno.astype(np.float64)
+    if ado > 0:
+        het = geno == 1
+        drop = het & (rng.random(M) < ado)
+        eff[drop] = rng.integers(0, 2, size=int(drop.sum())) * 2
+    lam = coverage
+    if cov_dispersion > 0:
+        k = 1.0 / (cov_dispersion**2)
+        lam = coverage * rng.gamma(k, 1.0 / k, size=M)
+    n_reads = rng.poisson(lam, size=M)
+    p_alt = eff / 2 * (1 - err) + (1 - eff / 2) * err
     n_alt = rng.binomial(n_reads, p_alt)
     return n_reads - n_alt, n_alt
 
@@ -424,6 +558,140 @@ def _extend_path(idx: np.ndarray, vals: np.ndarray, M: int) -> np.ndarray:
     return out
 
 
+@nb.njit(cache=True, fastmath=True)
+def _wht_inplace(a: np.ndarray) -> None:
+    """Iterative in-place WHT on a 1-D length-2^E array."""
+    n = a.shape[0]
+    h = 1
+    while h < n:
+        i = 0
+        while i < n:
+            for j in range(i, i + h):
+                x = a[j]
+                y = a[j + h]
+                a[j] = x + y
+                a[j + h] = x - y
+            i += 2 * h
+        h *= 2
+
+
+@nb.njit(cache=True, fastmath=True)
+def _emit_mul(v: np.ndarray, g: np.ndarray, t: int, E: int, two: bool) -> None:
+    """v[s] *= Πₑ g[e, t, state-of-embryo-e-in-s]. For the per-parent
+    HMM g is (E, K, 2) indexed by bitₑ(s); for both-parents g is
+    (E, K, 4) indexed by 2·bitₑ(s) + bit_{E+e}(s)."""
+    S = v.shape[0]
+    for s in range(S):
+        p = 1.0
+        for e in range(E):
+            if two:
+                p *= g[e, t, (((s >> e) & 1) << 1) | ((s >> (E + e)) & 1)]
+            else:
+                p *= g[e, t, (s >> e) & 1]
+        v[s] *= p
+
+
+@nb.njit(cache=True, fastmath=True)
+def _fb_wht(
+    g: np.ndarray,
+    n_bits: int,
+    p_r: np.ndarray,
+    p_s: np.ndarray,
+    popcnt: np.ndarray,
+    pop2: np.ndarray,
+    p_s2: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Linear-space rescaled forward-backward with WHT-diagonalised
+    transition and factored emission.
+
+    g is the per-embryo emission likelihood: (E, K, 2) for the
+    per-parent HMM, (E, K, 4) for the both-parents HMM. n_bits is E
+    or 2E. For both-parents, popcnt is the paternal half-popcount and
+    pop2/p_s2 the maternal counterparts; pass length-0 arrays for
+    the per-parent case.
+
+    Returns (alpha, beta), each (K, 2^n_bits) row-normalised; the
+    posterior is their elementwise product, re-normalised."""
+    E, K = g.shape[0], g.shape[1]
+    two = pop2.shape[0] > 0
+    S = 1 << n_bits
+    inv_S = 1.0 / S
+
+    alpha = np.empty((K, S))
+    beta = np.empty((K, S))
+    v = np.empty(S)
+    lam = np.empty(S)
+    rpow = np.empty(n_bits + 1)
+
+    for s in range(S):
+        v[s] = 1.0
+    _emit_mul(v, g, 0, E, two)
+    z = 0.0
+    for s in range(S):
+        z += v[s]
+    z = z if z > 0 else 1.0
+    for s in range(S):
+        alpha[0, s] = v[s] / z
+
+    for direction in range(2):
+        if direction == 0:
+            t0, t1, dt = 1, K, 1
+        else:
+            for s in range(S):
+                beta[K - 1, s] = inv_S
+            t0, t1, dt = K - 2, -1, -1
+        for t in range(t0, t1, dt):
+            gp = t - 1 if direction == 0 else t
+            r = 1.0 - 2.0 * p_r[gp]
+            sp = 1.0 - 2.0 * p_s[gp]
+            sm = 1.0 - 2.0 * p_s2[gp] if two else 1.0
+            rpow[0] = 1.0
+            for k in range(1, n_bits + 1):
+                rpow[k] = rpow[k - 1] * r
+            for s in range(S):
+                pc = popcnt[s] + (pop2[s] if two else 0)
+                ev = rpow[pc]
+                if popcnt[s] & 1:
+                    ev *= sp
+                if two and (pop2[s] & 1):
+                    ev *= sm
+                lam[s] = ev
+
+            if direction == 0:
+                for s in range(S):
+                    v[s] = alpha[t - 1, s]
+                _wht_inplace(v)
+                for s in range(S):
+                    v[s] *= lam[s]
+                _wht_inplace(v)
+                for s in range(S):
+                    if v[s] < 0.0:
+                        v[s] = 0.0
+                _emit_mul(v, g, t, E, two)
+            else:
+                for s in range(S):
+                    v[s] = beta[t + 1, s]
+                _emit_mul(v, g, t + 1, E, two)
+                _wht_inplace(v)
+                for s in range(S):
+                    v[s] *= lam[s]
+                _wht_inplace(v)
+                for s in range(S):
+                    if v[s] < 0.0:
+                        v[s] = 0.0
+            z = 0.0
+            for s in range(S):
+                z += v[s]
+            iz = 1.0 / z if z > 0 else 0.0
+            if direction == 0:
+                for s in range(S):
+                    alpha[t, s] = v[s] * iz
+            else:
+                for s in range(S):
+                    beta[t, s] = v[s] * iz
+    return alpha, beta
+
+
 def _per_embryo_emission(
     this_hap: np.ndarray,
     other_hap: np.ndarray,
@@ -502,7 +770,7 @@ def _joint_one_parent(
     states = np.arange(S, dtype=np.int64)
     bits = ((states[:, None] >> np.arange(E)) & 1).astype(np.int8)  # (S, E)
     popcnt = bits.sum(1).astype(np.int64)
-    xor_pop = popcnt[states[:, None] ^ states[None, :]]  # (S, S)
+    xor_pop = popcnt[states[:, None] ^ states[None, :]] if decode == "viterbi" else None
 
     le = _per_embryo_emission(this_hap, other_hap, idx, biopsies, err, other_w)
 
@@ -530,23 +798,21 @@ def _joint_one_parent(
     )
 
     le_c = le[:, keep, :]
-    le_joint = np.zeros((Kc, S))
-    for e in range(E):
-        le_joint += le_c[e][:, bits[:, e]]
-
-    lp_r, l1p_r = np.log(p_r), np.log1p(-p_r)
-    lp_s, l1p_s = np.log(p_s), np.log1p(-p_s)
-    h = np.arange(E + 1)[None, :]
-    a = l1p_s[:, None] + h * lp_r[:, None] + (E - h) * l1p_r[:, None]
-    b = lp_s[:, None] + (E - h) * lp_r[:, None] + h * l1p_r[:, None]
-    log_T_by_h = np.logaddexp(a, b)  # (Kc-1, E+1)
     K = Kc
 
-    # exp(T) lookup: per gap, only E+1 distinct values (by popcount).
-    exp_T_by_h = np.exp(log_T_by_h)  # (K-1, E+1)
-    pop_xor = xor_pop  # (S, S) ints in [0, E]
-
     if decode == "viterbi":
+        # Viterbi's max doesn't factor over the Kronecker structure,
+        # so this stays O(S²) per step.
+        le_joint = np.zeros((Kc, S))
+        for e in range(E):
+            le_joint += le_c[e][:, bits[:, e]]
+        lp_r, l1p_r = np.log(p_r), np.log1p(-p_r)
+        lp_s, l1p_s = np.log(p_s), np.log1p(-p_s)
+        h = np.arange(E + 1)[None, :]
+        a = l1p_s[:, None] + h * lp_r[:, None] + (E - h) * l1p_r[:, None]
+        b = lp_s[:, None] + (E - h) * lp_r[:, None] + h * l1p_r[:, None]
+        log_T_by_h = np.logaddexp(a, b)  # (Kc-1, E+1)
+        pop_xor = xor_pop
         V = np.full(S, -np.log(S)) + le_joint[0]
         bp = np.empty((K, S), dtype=np.int32)
         for t in range(1, K):
@@ -560,26 +826,26 @@ def _joint_one_parent(
         w_at_idx = bits[path].T  # (E, K)
         p1_at_idx = w_at_idx.astype(np.float64)
     else:
-        # Forward-backward; transition is symmetric in (a,b) so the
-        # same matrix serves both directions. Work in linear space
-        # with per-step rescaling to avoid the exp() of an S×S matrix.
-        log_alpha = np.empty((K, S))
-        log_alpha[0] = -np.log(S) + le_joint[0]
-        for t in range(1, K):
-            m = log_alpha[t - 1].max()
-            a_lin = np.exp(log_alpha[t - 1] - m)
-            log_alpha[t] = (
-                m + np.log(a_lin @ exp_T_by_h[t - 1, pop_xor]) + le_joint[t]
-            )
-        log_beta = np.zeros((K, S))
-        for t in range(K - 2, -1, -1):
-            v = log_beta[t + 1] + le_joint[t + 1]
-            m = v.max()
-            log_beta[t] = m + np.log(exp_T_by_h[t, pop_xor] @ np.exp(v - m))
-        log_post = log_alpha + log_beta
-        log_post -= log_post.max(1, keepdims=True)
-        post = np.exp(log_post)
-        post /= post.sum(1, keepdims=True)
+        # Forward-backward. R = [[1−p_r, p_r],[p_r, 1−p_r]] and
+        # RX = [[p_r, 1−p_r],[1−p_r, p_r]] share the Hadamard
+        # eigenbasis with eigenvalues (1, ±(1−2p_r)), so
+        #   T = (1−p_s)·R^⊗E + p_s·(RX)^⊗E = H^⊗E·diag(λ)·H^⊗E/2^E,
+        #   λ[s] = (1−2p_r)^|s| · (1 − 2p_s·[|s| odd]).
+        # The loop runs JIT-compiled in linear space with per-step
+        # rescaling and the emission applied per-embryo (factored),
+        # so there are no per-state exp/log calls and the (K, S)
+        # joint emission table is never materialised.
+        g = np.exp(np.ascontiguousarray(le_c))  # (E, Kc, 2)
+        alpha, beta = _fb_wht(
+            g, E,
+            np.ascontiguousarray(p_r),
+            np.ascontiguousarray(p_s),
+            np.ascontiguousarray(popcnt),
+            np.empty(0, dtype=np.int64),
+            np.empty(0, dtype=np.float64),
+        )
+        post = alpha * beta
+        post /= np.maximum(post.sum(1, keepdims=True), 1e-300)
         p1_at_idx = (post @ bits.astype(np.float64)).T  # (E, K)
         w_at_idx = (p1_at_idx > 0.5).astype(np.int8)
 
@@ -616,16 +882,16 @@ def joint_recover(
     Returns (genos, dosage, var_dose, ppaths, mpaths) each (E, M)."""
     M = len(par.pos)
     E = len(biopsies)
-    if E > 12:
+    if E > 16:
         raise ValueError(
-            f"joint_recover state space is 2^E = {1 << E} for E={E} embryos; "
-            f"this is intractable. Run on a subset of ≤8 to re-phase the "
-            f"parents (joint_rephase_recover), then hmm_recover per embryo."
+            f"joint_recover with E={E}: 2^{E}={1 << E} states is impractical. "
+            f"Run joint_rephase_recover on a subset of ≤10 embryos, then "
+            f"hmm_recover per embryo on the re-phased parents."
         )
-    if E > 8:
+    if E > 10:
         print(
-            f"[embryo] joint_recover with E={E} embryos → 2^{E}={1 << E} states; "
-            f"expect ~{(1 << (2 * (E - 5)))}× slower than E=5.",
+            f"[embryo] joint_recover with E={E} → 2^{E}={1 << E} states "
+            f"(WHT-factored); expect minutes per chromosome.",
             file=sys.stderr,
         )
     ar = np.arange(M)
@@ -677,6 +943,120 @@ def score_with_uncertainty(
         se = np.sqrt((w[None, :] ** 2 * var_dose[:, idx]).sum(1))
         out[pid] = (score, se)
     return out
+
+
+def joint_recover_full(
+    par: Parents,
+    biopsies: list[tuple[np.ndarray, np.ndarray]],
+    err: float,
+    recomb_per_bp: float = 1e-8,
+    switch_rate: float = 0.01,
+):
+    """Exact 4^E-state joint over both parents simultaneously.
+
+    State is (w₁ᵖ,…,w_Eᵖ, w₁ᵐ,…,w_Eᵐ) ∈ {0,1}^{2E}. The transition is
+    a mixture over the four (paternal-switch, maternal-switch)
+    events; in the Hadamard eigenbasis its eigenvalues factor as
+        λ[s] = (1−2p_r)^{|sᵖ|+|sᵐ|}·(1−2p_s·[|sᵖ| odd])·(1−2p_s·[|sᵐ| odd]),
+    so Tα = WHT₂E(λ ⊙ WHT₂E(α))/2^{2E} in O(E·4^E) per step.
+
+    This removes the coordinate-ascent approximation that
+    `joint_recover` makes at doubly-heterozygous sites; otherwise
+    the model is identical. Practical to E≈8.
+
+    Returns (genos, dosage, var_dose, ppaths, mpaths) each (E, M)."""
+    M = len(par.pos)
+    E = len(biopsies)
+    S = 1 << (2 * E)
+    if E > 9:
+        raise ValueError(f"4^E = {S} states; E > 9 is impractical here")
+    states = np.arange(S, dtype=np.int64)
+    bits = ((states[:, None] >> np.arange(2 * E)) & 1).astype(np.int8)  # (S, 2E)
+    pop_p = bits[:, :E].sum(1).astype(np.int64)
+    pop_m = bits[:, E:].sum(1).astype(np.int64)
+
+    idx = np.flatnonzero((par.pat[0] != par.pat[1]) | (par.mat[0] != par.mat[1]))
+    K = len(idx)
+    ar = np.arange(M)
+
+    # Per-embryo log P(reads | wᵖ, wᵐ) at each informative site —
+    # a (E, K, 2, 2) table; the joint emission is its sum over e.
+    le4 = np.zeros((E, K, 2, 2))
+    lp = np.array(
+        [np.log(d / 2 * (1 - err) + (1 - d / 2) * err) for d in range(3)]
+    )
+    l1p = np.log1p(-np.exp(lp))
+    for e, (nr, na) in enumerate(biopsies):
+        nr_i, na_i = nr[idx].astype(np.float64), na[idx].astype(np.float64)
+        for hp in (0, 1):
+            for hm in (0, 1):
+                d = par.pat[hp, idx].astype(np.int64) + par.mat[hm, idx].astype(np.int64)
+                le4[e, :, hp, hm] = na_i * lp[d] + nr_i * l1p[d]
+        nz = (nr_i + na_i) == 0
+        le4[e, nz] = 0.0
+    le4 = np.nan_to_num(le4, neginf=-1e9)
+
+    has_read = np.zeros(K, dtype=bool)
+    for nr, na in biopsies:
+        has_read |= (nr[idx] + na[idx]) > 0
+    has_read[0] = has_read[-1] = True
+    keep = np.flatnonzero(has_read)
+    Kc = len(keep)
+    seg = np.clip(np.searchsorted(keep, np.arange(K), side="right") - 1, 0, Kc - 2)
+
+    # Composite p_r, paternal p_s, maternal p_s per collapsed gap
+    # (paternal switch only at paternal hets, maternal at maternal hets).
+    dpos = np.diff(par.pos[idx]).astype(np.float64)
+    pr_full = np.clip(recomb_per_bp * dpos, 1e-12, 0.49)
+    log_keep = np.zeros(Kc - 1)
+    np.add.at(log_keep, seg[:-1], np.log1p(-2 * pr_full))
+    p_r = np.clip((1 - np.exp(log_keep)) / 2, 1e-12, 0.49)
+    n_phet = np.bincount(
+        seg[:-1], weights=(par.pat[0, idx] != par.pat[1, idx])[:-1], minlength=Kc - 1
+    )
+    n_mhet = np.bincount(
+        seg[:-1], weights=(par.mat[0, idx] != par.mat[1, idx])[:-1], minlength=Kc - 1
+    )
+    p_sp = np.clip((1 - (1 - 2 * max(switch_rate, 1e-12)) ** n_phet) / 2, 1e-12, 0.49)
+    p_sm = np.clip((1 - (1 - 2 * max(switch_rate, 1e-12)) ** n_mhet) / 2, 1e-12, 0.49)
+
+    g4 = np.exp(np.ascontiguousarray(le4[:, keep].reshape(E, Kc, 4)))
+    alpha, beta = _fb_wht(
+        g4, 2 * E,
+        np.ascontiguousarray(p_r),
+        np.ascontiguousarray(p_sp),
+        np.ascontiguousarray(pop_p),
+        np.ascontiguousarray(pop_m),
+        np.ascontiguousarray(p_sm),
+    )
+    post = alpha * beta
+    post /= np.maximum(post.sum(1, keepdims=True), 1e-300)
+
+    # Marginals P(w_e^p = 1), P(w_e^m = 1) per embryo at collapsed sites.
+    pp1c = (post @ bits[:, :E].astype(np.float64)).T  # (E, Kc)
+    pm1c = (post @ bits[:, E:].astype(np.float64)).T
+
+    het_rank = np.arange(K)
+    rank_c = het_rank[keep]
+    genos = np.empty((E, M), dtype=np.int8)
+    dosage = np.empty((E, M))
+    var_dose = np.zeros((E, M))
+    pat_het = (par.pat[0] != par.pat[1]).astype(np.float64)
+    mat_het = (par.mat[0] != par.mat[1]).astype(np.float64)
+    wp = np.empty((E, M), dtype=np.int8)
+    wm = np.empty((E, M), dtype=np.int8)
+    for e in range(E):
+        pp1 = _extend_path(idx, np.interp(het_rank, rank_c, pp1c[e]), M)
+        pm1 = _extend_path(idx, np.interp(het_rank, rank_c, pm1c[e]), M)
+        wp[e] = (pp1 > 0.5).astype(np.int8)
+        wm[e] = (pm1 > 0.5).astype(np.int8)
+        genos[e] = par.pat[wp[e], ar] + par.mat[wm[e], ar]
+        dosage[e] = (
+            par.pat[0] * (1 - pp1) + par.pat[1] * pp1
+            + par.mat[0] * (1 - pm1) + par.mat[1] * pm1
+        )
+        var_dose[e] = pp1 * (1 - pp1) * pat_het + pm1 * (1 - pm1) * mat_het
+    return genos, dosage, var_dose, wp, wm
 
 
 def _switch_track_from_paths(w: np.ndarray, idx: np.ndarray, M: int) -> np.ndarray:

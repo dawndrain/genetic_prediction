@@ -43,7 +43,9 @@ from genepred.embryo import (
     hmm_recover,
     hmm_recover_switch_aware,
     joint_recover,
+    load_embryo_reads,
     load_parents_cached,
+    load_parents_vcf,
     load_pgs_for_chrom,
     pick_parents,
     score_chrom,
@@ -73,7 +75,12 @@ def _do_chrom(chrom):
         rng = np.random.default_rng((a.seed, e, int(chrom)))
         true_geno, _, _ = simulate_child(par_true, rng)
         truths.append(true_geno)
-        biops.append(simulate_biopsy(true_geno, a.coverage, a.seq_err, rng))
+        biops.append(
+            simulate_biopsy(
+                true_geno, a.coverage, a.seq_err, rng,
+                ado=a.ado, cov_dispersion=a.cov_dispersion,
+            )
+        )
 
     if a.method == "naive":
         recs = [
@@ -89,26 +96,81 @@ def _do_chrom(chrom):
             for e in range(a.n_embryos)
         ]
     elif a.method == "joint":
-        _, dose, _, _, _ = joint_recover(
+        _, dose, vdose, _, _ = joint_recover(
             par_obs, biops, a.seq_err,
             switch_rate=max(a.switch_error_rate, 1e-4), n_iter=2,
         )
         recs = list(dose)
+        vdoses = list(vdose)
     else:
         raise ValueError(f"unknown --method {a.method}")
 
     emb = []
     for e in range(a.n_embryos):
         rec_geno = recs[e]
+        # Per-PGS variance contribution from this chromosome
+        # (Σ wᵢ²·Var[dᵢ]); zero for hard-call methods.
+        var_chrom = (
+            {pid: float((w**2 * vdoses[e][idx]).sum()) for pid, (idx, _, w) in pgs.items()}
+            if a.method == "joint"
+            else {pid: 0.0 for pid in pgs}
+        )
         emb.append(
             (
                 int((truths[e] == np.round(rec_geno)).sum()),
                 M,
                 score_chrom(truths[e], pgs),
                 score_chrom(rec_geno, pgs),
+                var_chrom,
             )
         )
     return chrom, M, len(ctx.inf_idx), set(pgs), pmid, emb
+
+
+def _ranking_confidence(rec_total, var_total, pids, args, n_draws: int = 500):
+    """Sample each embryo's raw PGS from N(point, √var), convert to
+    z vs 1KG-EUR, run through the QALY model, and report how often
+    each embryo comes out best across draws."""
+    ref = pd.read_csv(resource("1kg_pgs_summary.tsv"), sep="\t")
+    eur = ref[ref.super_pop == "EUR"].set_index("pgs_id")[["mean", "sd"]].astype(float)
+    id2t = {s.pgs_id: t for t, s in CURATED.items()}
+
+    usable = [
+        p for p in pids
+        if p in eur.index and id2t.get(p) is not None and float(eur.at[p, "sd"]) > 0
+    ]
+    if not usable:
+        return
+    n = args.n_embryos
+    rng = np.random.default_rng(args.seed)
+    qaly_draws = np.empty((n_draws, n))
+    for d in range(n_draws):
+        for e in range(n):
+            zsc = {}
+            for pid in usable:
+                raw = rng.normal(
+                    rec_total[e].get(pid, 0.0), np.sqrt(var_total[e].get(pid, 0.0))
+                )
+                zsc[id2t[pid]] = (raw - float(eur.at[pid, "mean"])) / float(
+                    eur.at[pid, "sd"]
+                )
+            qaly_draws[d, e] = q.compute_all(zsc)["total_qaly_delta"]
+    top = np.bincount(qaly_draws.argmax(1), minlength=n)
+    mu, sd = qaly_draws.mean(0), qaly_draws.std(0)
+    print(
+        f"\nRanking confidence — {n_draws} posterior draws of imputed "
+        f"dosage → QALY ranking:"
+    )
+    print("  embryo | P(best) | ΔQALY vs sib-mean (mean ± SD across draws)")
+    for e in np.argsort(-top):
+        print(
+            f"   e{e + 1:<4} | {top[e] / n_draws:>6.1%} | "
+            f"{mu[e] - mu.mean():+7.3f} ± {sd[e]:.3f}"
+        )
+    print(
+        "  (Imputation SE assumes per-site independence — a lower bound; "
+        "see genepred.embryo.score_with_uncertainty.)"
+    )
 
 
 def _qaly_report(embryo_scores, pgs_ids):
@@ -307,6 +369,18 @@ def main(argv: list[str] | None = None):
     )
     ap.add_argument("--seq-err", type=float, default=0.01)
     ap.add_argument(
+        "--ado",
+        type=float,
+        default=0.0,
+        help="WGA allelic-dropout rate per het site (MDA ≈ 0.1–0.25)",
+    )
+    ap.add_argument(
+        "--cov-dispersion",
+        type=float,
+        default=0.0,
+        help="WGA coverage coefficient-of-variation (MDA ≈ 0.5–1)",
+    )
+    ap.add_argument(
         "--switch-error-rate",
         type=float,
         default=0.0,
@@ -337,6 +411,7 @@ def main(argv: list[str] | None = None):
     # Per-embryo accumulators across chromosomes
     true_total = [dict() for _ in range(args.n_embryos)]
     rec_total = [dict() for _ in range(args.n_embryos)]
+    var_total = [dict() for _ in range(args.n_embryos)]
     parent_mid_total: dict[str, float] = {}
     conc_sum = np.zeros(args.n_embryos)
     conc_n = np.zeros(args.n_embryos)
@@ -359,13 +434,15 @@ def main(argv: list[str] | None = None):
             for pid, v in pmid.items():
                 parent_mid_total[pid] = parent_mid_total.get(pid, 0.0) + v
             for e in range(args.n_embryos):
-                cs, cn, st, sr = emb[e]
+                cs, cn, st, sr, sv = emb[e]
                 conc_sum[e] += cs
                 conc_n[e] += cn
                 for pid, v in st.items():
                     true_total[e][pid] = true_total[e].get(pid, 0.0) + v
                 for pid, v in sr.items():
                     rec_total[e][pid] = rec_total[e].get(pid, 0.0) + v
+                for pid, v in sv.items():
+                    var_total[e][pid] = var_total[e].get(pid, 0.0) + v
     print(f"  all chroms done in {time.time() - t0:.1f}s", file=sys.stderr)
 
     rows = [
@@ -386,6 +463,8 @@ def main(argv: list[str] | None = None):
 
     if len(chroms) > 1:
         _qaly_report(true_total, sorted(all_pids))
+        if args.method == "joint":
+            _ranking_confidence(rec_total, var_total, sorted(all_pids), args)
         print("\n--- recovery fidelity (true vs HMM-recovered, genome-wide) ---")
         for pid in sorted(all_pids):
             t = np.array([true_total[e].get(pid, 0) for e in range(args.n_embryos)])
@@ -440,6 +519,129 @@ def main(argv: list[str] | None = None):
             f"  {id2t.get(pid, pid):<24} rank-cor(true,rec)={rank_corr:+.3f}  "
             f"same top embryo: {'yes' if same_best else 'NO'}"
         )
+
+
+def score_real_embryos(
+    parent_vcf: Path,
+    father: str,
+    mother: str,
+    embryo_vcfs: list[Path],
+    *,
+    chroms: list[str] | None = None,
+    embryo_samples: list[str] | None = None,
+    switch_rate: float = 0.01,
+    seq_err: float = 0.01,
+    html_out: str | None = "docs/embryo_report.html",
+) -> tuple[list[dict[str, float]], list[dict[str, float]], set[str]]:
+    """Run the joint phase-aware HMM on actual parent + embryo data.
+
+    parent_vcf: a single phased VCF/VCF.gz containing both parents
+        (e.g. SHAPEIT5/Beagle output, or long-read WhatsHap).
+    embryo_vcfs: one low-coverage VCF per embryo with FORMAT/AD
+        (or RO/AO) allele-depth fields — typical output of a
+        bcftools-mpileup or DeepVariant low-pass run.
+    switch_rate: assumed parental phasing SER per consecutive het.
+        ~0.001 for long-read/trio-phased parents, ~0.005–0.02 for
+        statistical phasing depending on panel and ancestry.
+
+    Returns (rec_total, var_total, pgs_ids) — per-embryo genome-wide
+    raw PGS and its imputation variance — and writes the QALY/HTML
+    report."""
+    chroms = chroms or [str(c) for c in range(1, 23)]
+    n_emb = len(embryo_vcfs)
+    samples = embryo_samples or [None] * n_emb
+    rec_total: list[dict[str, float]] = [dict() for _ in range(n_emb)]
+    var_total: list[dict[str, float]] = [dict() for _ in range(n_emb)]
+    all_pids: set[str] = set()
+    cov_est: list[float] = []
+
+    for chrom in chroms:
+        t0 = time.time()
+        par = load_parents_vcf(parent_vcf, chrom, father, mother)
+        het = (par.pat[0] != par.pat[1]) | (par.mat[0] != par.mat[1])
+        pgs = load_pgs_for_chrom(chrom, par)
+        all_pids |= set(pgs)
+        biops = [
+            load_embryo_reads(ev, par, samples[e])
+            for e, ev in enumerate(embryo_vcfs)
+        ]
+        for nr, na in biops:
+            cov_est.append(float((nr + na).mean()))
+        _, dose, vdose, _, _ = joint_recover(
+            par, biops, seq_err, switch_rate=switch_rate, n_iter=2
+        )
+        for e in range(n_emb):
+            for pid, v in score_chrom(dose[e], pgs).items():
+                rec_total[e][pid] = rec_total[e].get(pid, 0.0) + v
+            for pid, (idx, _, w) in pgs.items():
+                var_total[e][pid] = var_total[e].get(pid, 0.0) + float(
+                    (w**2 * vdose[e, idx]).sum()
+                )
+        print(
+            f"  [chr{chrom}] {len(par.pos):,} sites ({het.sum():,} parent-het), "
+            f"{len(pgs)} PGS, mean embryo depth "
+            f"{np.mean([(nr + na).mean() for nr, na in biops]):.3f}× "
+            f"({time.time() - t0:.1f}s)",
+            file=sys.stderr,
+        )
+
+    print(
+        f"\n{n_emb} embryos, mean coverage {np.mean(cov_est):.3f}×, "
+        f"assumed parental SER {switch_rate}",
+        file=sys.stderr,
+    )
+    _qaly_report(rec_total, sorted(all_pids))
+    args = argparse.Namespace(n_embryos=n_emb, seed=0)
+    _ranking_confidence(rec_total, var_total, sorted(all_pids), args)
+    return rec_total, var_total, all_pids
+
+
+def main_real(argv: list[str] | None = None):
+    ap = argparse.ArgumentParser(
+        description="Score real embryo biopsies against phased parental "
+        "haplotypes. See docs/PHASING.md for how to phase the parents."
+    )
+    ap.add_argument(
+        "--parent-vcf",
+        required=True,
+        help="phased VCF(.gz) containing both parents",
+    )
+    ap.add_argument("--father", required=True, help="sample ID of the father")
+    ap.add_argument("--mother", required=True, help="sample ID of the mother")
+    ap.add_argument(
+        "--embryos",
+        required=True,
+        nargs="+",
+        help="low-coverage VCF(.gz) per embryo with FORMAT/AD (or RO/AO)",
+    )
+    ap.add_argument(
+        "--embryo-samples",
+        nargs="+",
+        default=None,
+        help="sample IDs within each embryo VCF (default: first sample)",
+    )
+    ap.add_argument("--chroms", default="1-22")
+    ap.add_argument(
+        "--switch-rate",
+        type=float,
+        default=0.01,
+        help="assumed parental SER per consecutive het; ~0.001 for "
+        "long-read/trio-phased parents, ~0.005–0.02 for statistical phasing",
+    )
+    ap.add_argument("--seq-err", type=float, default=0.01)
+    ap.add_argument("--html-out", default="docs/embryo_report.html")
+    a = ap.parse_args(argv)
+    score_real_embryos(
+        Path(a.parent_vcf),
+        a.father,
+        a.mother,
+        [Path(p) for p in a.embryos],
+        chroms=_parse_chroms(a.chroms),
+        embryo_samples=a.embryo_samples,
+        switch_rate=a.switch_rate,
+        seq_err=a.seq_err,
+        html_out=a.html_out,
+    )
 
 
 if __name__ == "__main__":

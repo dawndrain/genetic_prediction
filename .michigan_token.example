@@ -1,0 +1,14 @@
+# API token for the Michigan Imputation Server.
+#
+# 1. Sign up (free) at https://imputationserver.sph.umich.edu
+# 2. Account → Profile → API Access → Create token
+# 3. Save the token to ~/.michigan_token (one line, no quotes),
+#    or export MICHIGAN_API_TOKEN=<token>.
+#
+# Do NOT commit the real token — it grants download access to every
+# genome you've uploaded. .michigan_token is already in .gitignore.
+#
+# Panels available here: HRC r1.1 (default), 1000G Phase 3, CAAPA.
+# For TOPMed r3 see .topmed_token.example — separate server, separate
+# account, but the same `genepred impute michigan submit --server topmed`
+# command.

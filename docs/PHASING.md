@@ -120,7 +120,7 @@ largest panel you can:
 |---|---|---|---|
 | 1KG | ~2.5 k | ~1 % | already wired (`genepred/impute/beagle.py`) |
 | HRC | ~32 k | ~0.3 % | Michigan Imputation Server (already wired) |
-| TOPMed | ~97 k | ~0.1 % | same API at `imputation.biodatacatalyst.nhlbi.nih.gov` — point `genepred/impute/michigan.py:API` there with a BioData Catalyst token |
+| TOPMed | ~97 k | ~0.1 % | `genepred impute michigan submit --server topmed` (needs a BioData Catalyst token) |
 | UK Biobank | ~500 k | <0.1 % | approved-application only |
 
 At TOPMed-class SER (~0.1 %), 5 embryos at 0.05× gives R ≈ 250 and
@@ -171,11 +171,13 @@ Other trios: `--trio YRI` (NA19240), `KHV`, `CHS`, `MXL`.
 
 The error model is simplified: switch errors are i.i.d. per het pair
 (the real-data check above shows ~half are actually single-site point
-flips, and the rest cluster in low-LD regions), parents are perfectly
-genotyped, and the biopsy is clean Poisson coverage with no allelic
-dropout or WGA bias. Real PGT-A data is harder, so treat the absolute
-concordances above as upper bounds; the relative ordering of methods
-should be robust.
+flips, and the rest cluster in low-LD regions) and parents are
+perfectly genotyped. Whole-genome-amplification artefacts — allelic
+dropout and coverage over-dispersion — are now modelled (`--ado`,
+`--cov-dispersion` on the bench/demo); at MDA-like settings
+(ADO = 0.15, CV = 0.7) they move joint-recovery het-conc by < 1 pp at
+0.05× because they're per-site noise the HMM smooths over, unlike
+the long-range phasing switches that dominate the error budget.
 
 ## References
 

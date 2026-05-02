@@ -21,6 +21,7 @@ import click
 from genepred import qaly as _qaly
 from genepred.catalog import CURATED, ensure_weights
 from genepred.embryo_cli import main as _embryo_main
+from genepred.embryo_cli import main_real as _embryo_real
 from genepred.impute import beagle as _beagle
 from genepred.impute import michigan as _mich
 from genepred.scoring import format_report, format_results, score_genome
@@ -141,18 +142,26 @@ def cli_beagle(genotype, name, chroms, parallel, threads_per_chrom, heap_gb):
 
 @cli_impute.group("michigan")
 def cli_michigan():
-    """Michigan Imputation Server — split into submit/status/fetch
-    because results require an emailed decryption password."""
+    """Michigan / TOPMed Imputation Server — split into
+    submit/status/fetch because results require an emailed
+    decryption password."""
 
 
 @cli_michigan.command("submit")
 @click.argument("genotypes", nargs=-1, type=click.Path(exists=True), required=True)
 @click.option("--out-dir", type=click.Path(), required=True)
 @click.option(
+    "--server",
+    type=click.Choice(list(_mich.SERVERS)),
+    default="michigan",
+    help="michigan = HRC/1KG/CAAPA panels; topmed = TOPMed r3 "
+    "(~97k WGS, best for AFR/admixed). Separate accounts/tokens.",
+)
+@click.option(
     "--refpanel",
-    default="apps@hrc-r1.1",
-    help="HRC r1.1 (default), apps@1000g-phase-3-v5, "
-    "or apps@topmed-r3 (separate server).",
+    default=None,
+    help="Override the server's default panel "
+    "(michigan: apps@hrc-r1.1; topmed: apps@topmed-r3).",
 )
 @click.option(
     "--population",
@@ -165,11 +174,12 @@ def cli_michigan():
     type=float,
     help="Random fraction of sites to mask for accuracy check.",
 )
-def cli_mich_submit(genotypes, out_dir, refpanel, population, holdout_frac):
+def cli_mich_submit(genotypes, out_dir, server, refpanel, population, holdout_frac):
     """Conform, upload, and persist job state."""
     _mich.submit(
         list(genotypes),
         Path(out_dir),
+        server=server,
         refpanel=refpanel,
         population=population,
         holdout_frac=holdout_frac,
@@ -333,6 +343,22 @@ def cli_embryo_demo(ctx):
     All options are forwarded to genepred.embryo_cli; use
     `python -m genepred.embryo_cli --help` for the full list."""
     _embryo_main(ctx.args)
+
+
+@main.command(
+    "embryo-score",
+    context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
+)
+@click.pass_context
+def cli_embryo_score(ctx):
+    """Score real embryo biopsies: phased parent VCF + per-embryo
+    low-coverage VCFs (with AD allele depths) → joint phase-aware
+    HMM → posterior dosage → PGS → ΔQALY ranking with confidence.
+
+    Run `genepred embryo-score -- --help` for the full option list.
+    See docs/PHASING.md for how to phase the parents (long reads,
+    SHAPEIT5 trio, or TOPMed)."""
+    _embryo_real(ctx.args)
 
 
 if __name__ == "__main__":
