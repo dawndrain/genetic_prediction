@@ -10,6 +10,8 @@ import numpy as np
 import pytest
 
 from genepred import embryo as E
+from genepred import pharmgx as px
+from genepred import rare_variants as rv
 
 
 def _synthetic_parents(M: int = 20_000, het_rate: float = 0.03, seed: int = 0):
@@ -201,6 +203,46 @@ def test_biopsy_wga_artefacts(par):
     assert dirty > 0.70
 
 
+def test_rare_variants_check_and_flag():
+    """check_parents finds a variant on the father's hap-1 and
+    flag_embryos marks exactly the embryos whose paternal path is 1
+    at that site."""
+    v = next(x for x in rv.PROTECTIVE if x.gene == "PCSK9" and x.pos_grch37)
+    M = 5
+    pos = np.array(
+        [v.pos_grch37 - 200, v.pos_grch37 - 50, v.pos_grch37,
+         v.pos_grch37 + 30, v.pos_grch37 + 400],
+        dtype=np.int64,
+    )
+    ref = np.array(["A", "A", v.ref, "C", "G"], dtype="<U1")
+    alt = np.array(["G", "C", v.alt, "T", "A"], dtype="<U1")
+    pat = np.zeros((2, M), dtype=np.int8)
+    pat[1, 2] = 1  # father carries the ALT on hap-1 at the variant site
+    mat = np.zeros((2, M), dtype=np.int8)
+    par = E.Parents(chrom=v.chrom, pos=pos, ref=ref, alt=alt, pat=pat, mat=mat)
+
+    carried = rv.check_parents(par, rv.PROTECTIVE)
+    assert len(carried) == 1
+    cv, who, h = carried[0]
+    assert (cv.gene, who, h) == ("PCSK9", "father", 1)
+
+    # 3 embryos: e0 inherits paternal hap0 everywhere, e1 hap1, e2 mixed
+    wp = np.array([[0] * M, [1] * M, [0, 0, 1, 0, 0]], dtype=np.int8)
+    wm = np.zeros((3, M), dtype=np.int8)
+    flags = rv.flag_embryos(carried, wp, wm, par)
+    assert flags[0]["PCSK9"] is False
+    assert flags[1]["PCSK9"] is True
+    assert flags[2]["PCSK9"] is True
+
+    s = rv.summarise(carried, flags)
+    assert "PCSK9" in s and "father" in s
+
+    # ACMG list sanity
+    assert len(rv.PATHOGENIC_GENES) >= 75
+    assert rv.PATHOGENIC_GENES["BRCA1"]["inheritance"] == "AD"
+    assert all(v.direction == "protective" for v in rv.PROTECTIVE)
+
+
 def test_score_with_uncertainty():
     par = _synthetic_parents(M=2000, seed=5)
     obs, _, _ = E.apply_switch_errors(par, 0.01, np.random.default_rng(0))
@@ -223,3 +265,43 @@ def test_score_with_uncertainty():
     for e in range(3):
         ref = E.score_chrom(dose[e], pgs)["PGS_TEST"]
         assert abs(score[e] - ref) < 1e-9
+
+
+def test_carrier_and_lpa_lists():
+    assert len(rv.CARRIER_GENES) >= 80
+    for g in ("CFTR", "SMN1", "HEXA", "GJB2", "PAH", "DMD"):
+        assert g in rv.CARRIER_GENES, g
+    assert rv.CARRIER_GENES["CFTR"]["inheritance"] == "AR"
+    assert rv.CARRIER_GENES["DMD"]["inheritance"] == "XL"
+    # Lp(a) tags
+    assert len(rv.LPA_RISK) == 2
+    assert all(v.gene == "LPA" and v.direction == "risk" for v in rv.LPA_RISK)
+    assert {v.rsid for v in rv.LPA_RISK} == {"rs10455872", "rs3798220"}
+    # APP A673T was added to PROTECTIVE
+    assert any(v.gene == "APP" and v.rsid == "rs63750847" for v in rv.PROTECTIVE)
+
+
+def test_pharmgx_call_diplotype():
+    cyp2c19 = px.CPIC_BY_GENE["CYP2C19"]
+    # *1/*2 → one no-function allele → intermediate metabolizer
+    gt_het2 = {"rs4244285": ("G", "A"), "rs4986893": ("G", "G"),
+               "rs12248560": ("C", "C")}
+    diplo, pheno = px.call_diplotype(cyp2c19, gt_het2)
+    assert diplo == "*1/*2"
+    assert pheno == "Intermediate metabolizer"
+    # *2/*2 → poor metabolizer
+    gt_hom2 = {"rs4244285": ("A", "A"), "rs4986893": ("G", "G"),
+               "rs12248560": ("C", "C")}
+    diplo, pheno = px.call_diplotype(cyp2c19, gt_hom2)
+    assert diplo == "*2/*2"
+    assert pheno == "Poor metabolizer"
+    # *1/*17 → rapid
+    gt_17 = {"rs4244285": ("G", "G"), "rs4986893": ("G", "G"),
+             "rs12248560": ("C", "T")}
+    diplo, pheno = px.call_diplotype(cyp2c19, gt_17)
+    assert diplo == "*1/*17"
+    assert pheno == "Rapid metabolizer"
+    # report runs without error and mentions the gene
+    rep = px.report_pgx(gt_het2)
+    assert "CYP2C19" in rep and "Intermediate" in rep
+    assert len(px.CPIC_GENES) >= 10

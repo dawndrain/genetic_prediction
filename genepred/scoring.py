@@ -35,6 +35,7 @@ from genepred.catalog import CURATED, list_weight_files
 from genepred.io import COMPLEMENT, load_genotypes
 from genepred.paths import open_maybe_gz, resource
 from genepred.pca import admixture_fractions, load_pca, project
+from genepred.pharmgx import report_pgx
 from genepred.qaly import (
     ANCESTRY_R2_RATIO,
     CONTINUOUS_TRAITS,
@@ -42,6 +43,7 @@ from genepred.qaly import (
     interpolated_r2_ratio,
     liability_threshold_risk,
 )
+from genepred.rare_variants import LPA_RISK, PROTECTIVE, check_genome
 
 
 @dataclass
@@ -391,6 +393,8 @@ def score_genome(
         "admixture": admix,
         "r2_ratio": interpolated_r2_ratio(admix) if admix else ANCESTRY_R2_RATIO.get(ref_pop, 1.0),
         "n_snps": len(by_pos),
+        "rare_hits": check_genome(by_pos, PROTECTIVE + LPA_RISK),
+        "pgx_report": report_pgx(by_rs),
     }
     return results, meta
 
@@ -633,4 +637,30 @@ def format_report(results: list[ScoreResult], meta: dict, source: str = "") -> s
             L.append(
                 f"  {r.trait:<26} {r.pgs_id}  matched {r.n_matched:,}/{r.n_total:,}"
             )
+    rare = meta.get("rare_hits", [])
+    if rare:
+        L += [
+            "",
+            "=" * 116,
+            "RARE HIGH-IMPACT VARIANTS  (curated; not captured by PGS)",
+            "=" * 116,
+        ]
+        for v, n in rare:
+            arrow = "↑" if v.direction == "protective" else "↓"
+            q = f"  ΔQALY≈{v.qaly_estimate:+.2f}" if v.qaly_estimate else ""
+            L.append(
+                f"  {v.gene:<10} {v.hgvs or v.rsid or '':<14} "
+                f"{n}× {arrow}{v.direction:<10} tier-{v.evidence_tier}  "
+                f"{v.effect_description}{q}"
+            )
+    pgx = meta.get("pgx_report")
+    if pgx:
+        L += [
+            "",
+            "=" * 116,
+            "PHARMACOGENOMICS  (CPIC Level-A; star-allele calls from "
+            "array data — CYP2D6 CNV and full HLA need dedicated assays)",
+            "=" * 116,
+            pgx,
+        ]
     return "\n".join(L)
