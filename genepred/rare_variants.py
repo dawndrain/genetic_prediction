@@ -57,6 +57,7 @@ from pathlib import Path
 import numpy as np
 
 from genepred.embryo import Parents
+from genepred.io import hard_call
 from genepred.paths import data_dir
 
 
@@ -173,7 +174,7 @@ PROTECTIVE: list[RareVariant] = [
         notes="MAF ~6% EUR.",
     ),
     RareVariant(
-        "IFIH1", "rs35667974", "p.I923V", "2", 163124051, "T", "C",
+        "IFIH1", "rs35667974", "p.I923V", "2", 163124637, "T", "C",
         "protective", "type1_diabetes",
         "T1D OR ~0.5; also psoriasis protection", 2,
         "Nejentsev 2009 Science",
@@ -181,7 +182,7 @@ PROTECTIVE: list[RareVariant] = [
         notes="Other IFIH1 rare LoF similar (rs35337543 etc.).",
     ),
     RareVariant(
-        "TYK2", "rs34536443", "p.P1104A", "19", 10463118, "C", "G",
+        "TYK2", "rs34536443", "p.P1104A", "19", 10463118, "G", "C",
         "protective", "autoimmune",
         "RA/SLE/T1D/IBD/MS protection (OR ~0.6–0.8)", 2,
         "Dendrou 2016 Sci Transl Med; deucravacitinib",
@@ -781,7 +782,10 @@ def check_genome(
         g = by_pos.get((v.chrom, int(v.pos_grch37)))
         if g is None:
             continue
-        a1, a2 = str(g[0]), str(g[1])
+        # hard_call collapses imputed (ref, alt, dosage) tuples; without it
+        # every variant whose site merely exists in an imputed VCF would be
+        # counted as carried.
+        a1, a2 = hard_call(g)
         n = (a1 == v.alt) + (a2 == v.alt)
         if n > 0:
             hits.append((v, int(n)))

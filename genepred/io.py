@@ -22,6 +22,20 @@ COMPLEMENT = str.maketrans("ACGT", "TGCA")
 Genotype = tuple[dict[str, tuple[str, str]], dict[tuple[str, int], tuple[str, str]]]
 
 
+def hard_call(g) -> tuple[str, str]:
+    """Collapse a genotype value from load_genotypes() to two allele letters.
+
+    Hard-call 2-tuples pass through; imputed (ref, alt, dosage) 3-tuples are
+    rounded to the nearest allele count. Use this in consumers that count
+    allele copies by string comparison (pharmgx, rare_variants) so imputed
+    VCF input doesn't get misread as carrying every ALT allele."""
+    if len(g) == 3:
+        ref, alt, ds = g
+        n = min(2, max(0, round(ds)))
+        return (alt, alt) if n == 2 else ((ref, alt) if n == 1 else (ref, ref))
+    return g
+
+
 def chrom_sort_key(chrom: str):
     try:
         return (0, int(chrom))
@@ -58,6 +72,10 @@ def load_genotypes(path) -> Genotype:
             rsid, chrom, pos, gt = parts[0], parts[1].lstrip("chr"), parts[2], parts[3]
             if len(parts) >= 5 and len(parts[3]) == 1 and len(parts[4]) == 1:
                 gt = parts[3] + parts[4]
+            if len(gt) == 1 and gt in "ACGT":
+                # Hemizygous call (male X/Y, MT) — store as homozygous so
+                # X-linked / mitochondrial sites (G6PD, MT-RNR1) aren't lost.
+                gt = gt + gt
             if len(gt) != 2 or any(c not in "ACGT" for c in gt):
                 continue
             g = (gt[0], gt[1])
@@ -144,6 +162,8 @@ def load_genotype_by_chrom(path) -> dict[str, dict[int, tuple[str, str, str]]]:
             rsid, chrom, pos, gt = p[0], p[1].lstrip("chr"), p[2], p[3]
             if len(p) >= 5 and len(p[3]) == 1 and len(p[4]) == 1:
                 gt = p[3] + p[4]
+            if len(gt) == 1 and gt in "ACGT":
+                gt = gt + gt  # hemizygous X/Y/MT call (see load_genotypes)
             if len(gt) != 2 or any(c not in "ACGT" for c in gt):
                 continue
             try:

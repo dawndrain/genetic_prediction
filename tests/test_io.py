@@ -28,7 +28,7 @@ def test_load_23andme_text(tmp_path):
     assert by_rs["rs1"] == ("A", "G")
     assert by_rs["rs2"] == ("C", "C")
     assert "rs3" not in by_rs  # no-call dropped
-    assert "rs4" not in by_rs  # haploid dropped
+    assert by_rs["rs4"] == ("A", "A")  # hemizygous X/MT kept as homozygous
     assert ("1", 4000) in by_pos  # i-id keeps position
     assert "i999" not in by_rs
 
@@ -73,3 +73,24 @@ def test_crlf_line_endings(tmp_path):
     by_rs, _ = io.load_genotypes(p)
     assert by_rs["rs30"] == ("A", "C")
     assert by_rs["rs31"] == ("G", "G")
+
+
+def test_hemizygous_single_letter_calls_load(tmp_path):
+    # Male X / MT calls in 23andMe exports are single letters; they should
+    # load as homozygous so G6PD / MT-RNR1 screening sees them.
+    f = tmp_path / "dtc.txt"
+    f.write_text(
+        "# comment\n"
+        "rsid\tchromosome\tposition\tgenotype\n"
+        "rs1050828\tX\t153762634\tT\n"
+        "rs267606617\tMT\t1555\tA\n"
+        "rs4244285\t10\t96541616\tGA\n"
+        "rs9999999\t1\t1000\t--\n"
+    )
+    from genepred.io import load_genotypes
+
+    by_rs, by_pos = load_genotypes(f)
+    assert by_rs["rs1050828"] == ("T", "T")
+    assert by_rs["rs267606617"] == ("A", "A")
+    assert by_rs["rs4244285"] == ("G", "A")
+    assert "rs9999999" not in by_rs

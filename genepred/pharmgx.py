@@ -29,6 +29,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from genepred.io import hard_call
+
 # (rsid, chrom, pos_grch37 | None, ref, alt) — alt is the star-allele-defining allele.
 SNP = tuple[str, str, int | None, str, str]
 
@@ -76,7 +78,9 @@ CPIC_GENES: list[PgxGene] = [
             "*17": [("rs12248560", "10", 96521657, "C", "T")],
         },
         function={"*1": "normal", "*2": "none", "*3": "none", "*17": "increased"},
-        phenotype_map={},
+        # CPIC classifies *2/*17 (one no-function + one increased-function
+        # allele) as Intermediate, not Normal.
+        phenotype_map={("increased", "none"): "Intermediate metabolizer"},
         drugs=[
             "clopidogrel", "voriconazole", "citalopram", "escitalopram",
             "sertraline", "amitriptyline", "omeprazole", "pantoprazole",
@@ -98,7 +102,10 @@ CPIC_GENES: list[PgxGene] = [
             "*1": "normal", "*2": "normal", "*4": "none",
             "*10": "decreased", "*41": "decreased",
         },
-        phenotype_map={},
+        # CPIC activity score: one decreased + one no-function allele
+        # (e.g. *4/*41, *4/*10) is AS 0.25–0.5 = Intermediate; only
+        # AS 0 (two no-function alleles) is a Poor metabolizer.
+        phenotype_map={("decreased", "none"): "Intermediate metabolizer"},
         drugs=[
             "codeine", "tramadol", "tamoxifen", "atomoxetine",
             "ondansetron", "paroxetine", "fluoxetine", "venlafaxine",
@@ -141,7 +148,7 @@ CPIC_GENES: list[PgxGene] = [
         gene="TPMT",
         star_alleles={
             "*1": [],
-            "*2": [("rs1800462", "6", 18143955, "G", "C")],
+            "*2": [("rs1800462", "6", 18143955, "C", "G")],
             "*3B": [("rs1800460", "6", 18139228, "C", "T")],
             "*3C": [("rs1142345", "6", 18130918, "T", "C")],
             # *3A = *3B + *3C in cis; resolved by call_diplotype if both present.
@@ -156,7 +163,7 @@ CPIC_GENES: list[PgxGene] = [
         gene="NUDT15",
         star_alleles={
             "*1": [],
-            "*3": [("rs116855232", "13", 48611918, "C", "T")],
+            "*3": [("rs116855232", "13", 48619855, "C", "T")],
         },
         function={"*1": "normal", "*3": "none"},
         phenotype_map={},
@@ -169,7 +176,7 @@ CPIC_GENES: list[PgxGene] = [
         star_alleles={
             "*1": [],
             "*2A": [("rs3918290", "1", 97915614, "C", "T")],
-            "*13": [("rs55886062", "1", 97981343, "T", "G")],
+            "*13": [("rs55886062", "1", 97981343, "A", "C")],
             "c.2846A>T": [("rs67376798", "1", 97547947, "T", "A")],
             "HapB3": [("rs56038477", "1", 98039419, "C", "T")],
         },
@@ -295,8 +302,24 @@ def _has_allele(genotypes: dict[str, tuple[str, str]], snps: list[SNP]) -> int:
         gt = genotypes.get(rsid)
         if gt is None:
             return 0
-        counts.append(sum(1 for a in gt if a == alt))
+        counts.append(sum(1 for a in hard_call(gt) if a == alt))
     return min(counts)
+
+
+def untyped_alleles(
+    gene: PgxGene, genotypes: dict[str, tuple[str, str]]
+) -> list[str]:
+    """Non-reference star alleles whose defining SNPs are absent from the
+    input — those alleles can't be detected and are silently treated as
+    reference by call_diplotype."""
+    return [
+        star
+        for star, snps in gene.star_alleles.items()
+        if snps and any(snp[0] not in genotypes for snp in snps)
+    ]
+
+
+NOT_ASSAYED = "Not assayed (tag SNPs absent from input)"
 
 
 def call_diplotype(
@@ -308,8 +331,16 @@ def call_diplotype(
     remainder with the reference allele, and maps to a metabolizer
     phenotype via the gene's (or the default) function table. This
     is a screening-grade call — phase, structural variants, and
-    rare alleles are not handled. Returns (diplotype, phenotype)."""
+    rare alleles are not handled. Returns (diplotype, phenotype);
+    if none of the gene's tag SNPs are in the input the call is
+    ("n/a", NOT_ASSAYED) rather than a default-normal result."""
     ref = next(iter(gene.star_alleles))
+    if all(
+        snp[0] not in genotypes
+        for snps in gene.star_alleles.values()
+        for snp in snps
+    ):
+        return "n/a", NOT_ASSAYED
     haps: list[str] = []
     for star, snps in gene.star_alleles.items():
         if star == ref:
@@ -344,7 +375,14 @@ def report_pgx(genotypes: dict[str, tuple[str, str]]) -> str:
     for g in CPIC_GENES:
         diplo, pheno = call_diplotype(g, genotypes)
         drugs = ", ".join(g.drugs[:4]) + (" …" if len(g.drugs) > 4 else "")
-        rows.append((g.gene, diplo, pheno, drugs, g.notes))
+        notes = g.notes
+        missing = untyped_alleles(g, genotypes)
+        if missing and pheno != NOT_ASSAYED:
+            notes = (notes + " " if notes else "") + (
+                "Not assayed on this input (treated as absent): "
+                + ", ".join(missing) + "."
+            )
+        rows.append((g.gene, diplo, pheno, drugs, notes))
     w_gene = max(8, max(len(r[0]) for r in rows))
     w_dip = max(10, max(len(r[1]) for r in rows))
     w_phen = max(20, max(len(r[2]) for r in rows))
