@@ -12,6 +12,12 @@ gains from embryo selection.
 > [predictor-scaling analysis](examples/r2_scaling.py) shows how this
 > grows as predictors improve.
 
+**Slides:** a 17-slide intro to genetic prediction and this pipeline —
+heritability, why linear models work, current predictor R², and what
+IVF selection buys today:
+[PDF](docs/genetic_prediction_slides.pdf) (renders on GitHub) ·
+[pptx source](docs/genetic_prediction_slides.pptx).
+
 ## What this does
 
 1. **Score genomes** — takes raw DTC genotype files or VCFs, optionally
