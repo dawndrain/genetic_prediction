@@ -423,6 +423,47 @@ RELEASE = (
     "v0.1.0/{pgs}_hmPOS_GRCh38.txt.gz"
 )
 
+# Per-SNP 1KG allele frequencies for the curated weight-file SNPs
+# (reference/build_af_sidecar.py). Lets scoring correct for non-random
+# chip coverage on un-imputed arrays without users downloading 1KG.
+AF_SIDECAR_NAME = "weight_snp_af_grch37.tsv.gz"
+AF_SIDECAR_URL = (
+    "https://github.com/dawndrain/genetic_prediction/releases/download/"
+    "v0.1.0/" + AF_SIDECAR_NAME
+)
+
+
+def ensure_af_sidecar(verbose: bool = True) -> Path | None:
+    """Fetch the AF sidecar from the GitHub release if it isn't present.
+    Returns its path, or None if unavailable (scoring then falls back to
+    the random-missingness correction)."""
+    from genepred.paths import RESOURCES, data_dir
+
+    for base in (data_dir(), RESOURCES):
+        if (base / AF_SIDECAR_NAME).exists():
+            return base / AF_SIDECAR_NAME
+    dest = data_dir() / AF_SIDECAR_NAME
+    try:
+        if verbose:
+            print(f"  fetching {AF_SIDECAR_NAME} (allele frequencies) ...")
+        req = Request(AF_SIDECAR_URL, headers={"User-Agent": "genepred/0.1"})
+        tmp = dest.with_suffix(".part")
+        # Shorter timeout than the weight files: this runs on every
+        # fetch-weights invocation and the sidecar is optional.
+        with urlopen(req, timeout=30) as resp, open(tmp, "wb") as out:
+            while chunk := resp.read(1 << 20):
+                out.write(chunk)
+        tmp.rename(dest)
+        return dest
+    except Exception as e:
+        if verbose:
+            print(
+                f"    sidecar fetch failed ({e}); rebuild via "
+                f"reference/build_af_sidecar.py or scoring will use the "
+                f"random-missingness fallback"
+            )
+        return None
+
 
 def download(pgs_id: str, dest_dir: Path | None = None, *, local: bool = False) -> Path:
     """Fetch a harmonized scoring file — from PGS Catalog for `PGS*` IDs,
@@ -483,6 +524,7 @@ def ensure_weights(
             "PGS header mismatch (curated trait_reported != file): "
             + ", ".join(f"{t}={p}" for t, p in bad)
         )
+    ensure_af_sidecar(verbose=verbose)
     return out
 
 

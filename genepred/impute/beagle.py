@@ -24,8 +24,13 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from genepred.io import load_genotype_by_chrom, parse_chroms, write_conformed_vcf
-from genepred.paths import data_dir, find_tool, kg_dir, tools_dir
+from genepred.io import (
+    bgzf_compress,
+    load_genotype_by_chrom,
+    parse_chroms,
+    write_conformed_vcf,
+)
+from genepred.paths import data_dir, find_tool, kg_dir, open_maybe_gz, tools_dir
 
 BEAGLE_URL = "https://faculty.washington.edu/browning/beagle/beagle.27Feb25.75f.jar"
 GENETIC_MAP_URL = (
@@ -166,6 +171,124 @@ def _impute_chrom(
     }
 
 
+# --------------------------------------------------------- rsID annotation
+# Beagle drops marker IDs and the 1KG Phase 3 panel VCFs don't carry rsIDs,
+# so the imputed output can only be matched by (chrom, pos). That silently
+# zeroes out every PGS weight file that has rsIDs but no GRCh37 positions.
+# Re-annotate the output from what we do know: the chip's own rsIDs (typed
+# sites, via the conformed input VCFs) and the GRCh37-build weight files on
+# disk, each of which pairs rsIDs with GRCh37 positions.
+
+_ANNOTATED_MARKER = "##genepred_rsid_annotated=1"
+
+
+def _grch37_rsid_map(
+    in_dir: Path | None, weights_dir: Path | None = None
+) -> dict[tuple[str, int], str]:
+    """(chrom, pos) -> rsID on GRCh37, from conformed chip input + weight
+    files whose native build is GRCh37."""
+    from genepred.catalog import list_weight_files, read_header
+
+    pos2rs: dict[tuple[str, int], str] = {}
+    try:
+        weight_files = list_weight_files(weights_dir)
+    except OSError:
+        weight_files = []
+    for _, wf in weight_files:
+        if read_header(wf).get("genome_build", "GRCh37") not in (
+            "GRCh37", "hg19", "NCBI37",
+        ):
+            continue
+        with open_maybe_gz(wf) as f:
+            header = next((ln for ln in f if not ln.startswith("#")), None)
+            if header is None:
+                continue
+            cols = {c: i for i, c in enumerate(header.rstrip("\n").split("\t"))}
+            i_chr, i_pos = cols.get("chr_name"), cols.get("chr_position")
+            i_rs = cols.get("hm_rsID", cols.get("rsID", cols.get("rsid")))
+            if i_chr is None or i_pos is None or i_rs is None:
+                continue
+            for line in f:
+                r = line.rstrip("\n").split("\t")
+                if i_rs >= len(r) or not r[i_rs].startswith("rs"):
+                    continue
+                try:
+                    pos2rs[(r[i_chr].lstrip("chr"), int(r[i_pos]))] = r[i_rs]
+                except (ValueError, IndexError):
+                    continue
+    # The chip's own rsIDs are authoritative for typed sites — apply last.
+    for vcf in sorted(in_dir.glob("chr*.vcf")) if in_dir else []:
+        with open(vcf) as f:
+            for line in f:
+                if line.startswith("#"):
+                    continue
+                r = line.split("\t", 4)
+                if len(r) > 3 and r[2].startswith("rs"):
+                    try:
+                        pos2rs[(r[0].lstrip("chr"), int(r[1]))] = r[2]
+                    except ValueError:
+                        continue
+    return pos2rs
+
+
+def _annotate_chrom(vcf_gz: Path, pos2rs: dict[tuple[str, int], str]) -> int:
+    """Fill missing IDs in one imputed chr*.vcf.gz in place (BGZF output).
+    Returns the number of sites annotated; -1 if already annotated."""
+    out_lines: list[str] = []
+    n_named = 0
+    with open_maybe_gz(vcf_gz) as f:
+        for line in f:
+            if line.startswith("#"):
+                if line.rstrip("\n") == _ANNOTATED_MARKER:
+                    return -1
+                if line.startswith("#CHROM"):
+                    out_lines.append(_ANNOTATED_MARKER + "\n")
+                out_lines.append(line)
+                continue
+            r = line.split("\t", 3)
+            if len(r) > 3 and (not r[2] or r[2] == "."):
+                rs = pos2rs.get((r[0].lstrip("chr"), int(r[1])))
+                if rs:
+                    r[2] = rs
+                    n_named += 1
+                    line = "\t".join(r)
+            out_lines.append(line)
+    tmp = vcf_gz.with_suffix(".rsid.tmp")
+    bgzf_compress("".join(out_lines).encode(), tmp)
+    tmp.rename(vcf_gz)
+    # Any tabix index built before the rewrite no longer matches the file.
+    Path(str(vcf_gz) + ".tbi").unlink(missing_ok=True)
+    return n_named
+
+
+def annotate_rsids(
+    out_dir: Path,
+    in_dir: Path | None = None,
+    chroms: str = "1-22",
+    weights_dir: Path | None = None,
+    parallel: int = 4,
+) -> int:
+    """Backfill rsIDs into Beagle output VCFs under `out_dir`. Idempotent
+    (annotated files carry a header marker and are skipped). Returns the
+    total number of sites annotated."""
+    targets = [
+        out_dir / f"chr{c}.vcf.gz"
+        for c in parse_chroms(chroms)
+        if (out_dir / f"chr{c}.vcf.gz").exists()
+    ]
+    if not targets:
+        return 0
+    pos2rs = _grch37_rsid_map(in_dir, weights_dir)
+    if not pos2rs:
+        return 0
+    total = 0
+    with ThreadPoolExecutor(max_workers=parallel) as ex:
+        for n in ex.map(lambda p: _annotate_chrom(p, pos2rs), targets):
+            if n > 0:
+                total += n
+    return total
+
+
 def impute(
     genotype_path,
     *,
@@ -249,6 +372,12 @@ def impute(
             f"{len(failed)} chromosome(s) failed: "
             + ", ".join(f"chr{r['chrom']} (see {r['log']})" for r in failed)
         )
+
+    # Beagle output has no marker IDs (the 1KG panel doesn't carry them);
+    # restore rsIDs so rsID-only PGS weight files can still match.
+    n_named = annotate_rsids(out_dir, in_dir, chroms, parallel=min(parallel, 4))
+    if n_named:
+        print(f"[beagle] restored rsIDs at {n_named:,} sites", file=sys.stderr)
     return out_dir
 
 

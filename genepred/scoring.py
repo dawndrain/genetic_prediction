@@ -18,6 +18,21 @@ imputation), the partial sum has expectation ~ f·μ_ref and variance
     z ≈ (raw - f·μ) / (σ·√f).
 
 This is what makes raw, un-imputed DTC files give usable z-scores.
+
+Sites the genome doesn't cover are mean-imputed at 2·EAF when the weight
+file carries a frequency column. That keeps the absolute `raw` score on
+the full-file scale, but those sites carry no individual signal, so they
+are excluded from the partial sum the normalization above is applied to
+(otherwise the f-correction double-counts them and every genome gets the
+same spurious offset).
+
+The f·μ / √f form assumes the matched SNPs are a random sample of the
+panel. Array content isn't random, so when per-SNP allele frequencies are
+known — from the weight file itself or from the shipped AF sidecar
+(load_af_sidecar / reference/build_af_sidecar.py) — the normalization
+instead centers on the matched subset's own expected mean and scales by
+its share of the frequency-implied variance, which removes the
+chip-specific offsets that otherwise show up as multi-σ artifacts.
 """
 
 from __future__ import annotations
@@ -33,7 +48,7 @@ from tqdm import tqdm
 
 from genepred.catalog import CURATED, list_weight_files
 from genepred.io import COMPLEMENT, load_genotypes
-from genepred.paths import open_maybe_gz, resource
+from genepred.paths import RESOURCES, data_dir, open_maybe_gz, resource
 from genepred.pca import admixture_fractions, load_pca, project
 from genepred.pharmgx import report_pgx
 from genepred.qaly import (
@@ -84,7 +99,36 @@ def read_pgs_header(f) -> list[str]:
     raise ValueError("no header row found in PGS weight file")
 
 
-def score_one(by_rs, by_pos, pgs_path, build: str = "GRCh37") -> dict:
+def _sidecar_af(af_lookup, rsid: str, key, ea: str, oa: str) -> float | None:
+    """Effect-allele frequency from the AF sidecar, oriented to `ea`.
+
+    Mirrors score_one's genotype matching: weight-file alleles are assumed
+    to be on the same (plus) strand as the sidecar, so a direct ref/alt
+    match wins even for A/T and C/G SNPs; None is returned only when the
+    alleles match by complement alone and the SNP is strand-ambiguous, or
+    don't match at all."""
+    af_by_rs, af_by_pos = af_lookup
+    rec = af_by_rs.get(rsid) if rsid else None
+    if rec is None and key is not None:
+        rec = af_by_pos.get(key)
+    if rec is None:
+        return None
+    ref, alt, af_alt = rec
+    if ea == alt:
+        return af_alt
+    if ea == ref:
+        return 1.0 - af_alt
+    if oa and {ea, oa} == {ea.translate(COMPLEMENT), oa.translate(COMPLEMENT)}:
+        return None
+    eac = ea.translate(COMPLEMENT)
+    if eac == alt:
+        return af_alt
+    if eac == ref:
+        return 1.0 - af_alt
+    return None
+
+
+def score_one(by_rs, by_pos, pgs_path, build: str = "GRCh37", af_lookup=None) -> dict:
     """Score one genome against one PGS weight file.
 
     Matching tries rsID first, then (chrom,pos) in the requested build.
@@ -92,10 +136,16 @@ def score_one(by_rs, by_pos, pgs_path, build: str = "GRCh37") -> dict:
     yields a match — except A/T and C/G SNPs, which are inherently
     ambiguous and counted in n_ambiguous instead. Sites missing from the
     genome are mean-imputed at 2·EAF if the weight file carries a
-    frequency column.
+    frequency column; they contribute to `raw` (full-file scale) but not
+    to `raw_matched`, which is what normalization uses, nor to `var`,
+    since a site fixed at its expectation has zero variance. When a
+    frequency is known — from the file's own column or the `af_lookup`
+    sidecar (see load_af_sidecar) — per-subset expectations/variances
+    (exp_matched/var vs expected/var_all) are also returned so the
+    normalization can correct for non-random chip coverage.
     """
-    n_total = n_matched = n_imputed = n_ambiguous = 0
-    raw = exp = var = 0.0
+    n_total = n_matched = n_imputed = n_ambiguous = n_af = 0
+    raw_matched = imputed_contrib = exp = var = exp_all = var_all = 0.0
     with open_maybe_gz(pgs_path) as f:
         cols = read_pgs_header(f)
         ix = {c: i for i, c in enumerate(cols)}
@@ -121,23 +171,33 @@ def score_one(by_rs, by_pos, pgs_path, build: str = "GRCh37") -> dict:
                 continue
             ea = row[i_ea].upper()
             oa = row[i_oa].upper() if i_oa is not None and i_oa < len(row) else ""
+
+            rsid = row[i_rs] if i_rs is not None and i_rs < len(row) else ""
+            key = None
+            if i_chr is not None and i_pos is not None:
+                try:
+                    key = (row[i_chr].lstrip("chr"), int(row[i_pos]))
+                except (ValueError, IndexError):
+                    pass
+
             af = None
             if i_af is not None and i_af < len(row):
                 try:
                     af = float(row[i_af])
                 except (ValueError, IndexError):
                     pass
+            if af is None and af_lookup is not None:
+                af = _sidecar_af(af_lookup, rsid, key, ea, oa)
+            if af is not None:
+                n_af += 1
+                exp_all += w * 2 * af
+                var_all += w * w * 2 * af * (1 - af)
 
             g = None
-            rsid = row[i_rs] if i_rs is not None and i_rs < len(row) else ""
             if rsid and rsid in by_rs:
                 g = by_rs[rsid]
-            elif i_chr is not None and i_pos is not None:
-                try:
-                    key = (row[i_chr].lstrip("chr"), int(row[i_pos]))
-                    g = by_pos.get(key)
-                except (ValueError, IndexError):
-                    pass
+            elif key is not None:
+                g = by_pos.get(key)
 
             dosage = None
             if g is not None and len(g) == 3:
@@ -171,37 +231,92 @@ def score_one(by_rs, by_pos, pgs_path, build: str = "GRCh37") -> dict:
                         dosage = (a1 == eac) + (a2 == eac)
                         n_matched += 1
 
-            if dosage is None and af is not None:
-                dosage = 2 * af
-                n_imputed += 1
             if dosage is None:
+                if af is not None:
+                    imputed_contrib += w * 2 * af
+                    n_imputed += 1
                 continue
 
-            raw += w * dosage
+            raw_matched += w * dosage
             if af is not None:
                 exp += w * 2 * af
                 var += w * w * 2 * af * (1 - af)
 
-    z = (raw - exp) / sqrt(var) if var > 0 else float("nan")
+    z = (raw_matched - exp) / sqrt(var) if var > 0 else float("nan")
     return dict(
         n_total=n_total,
         n_matched=n_matched,
         n_imputed=n_imputed,
         n_ambiguous=n_ambiguous,
-        raw=raw,
-        expected=exp,
+        n_af=n_af,
+        raw=raw_matched + imputed_contrib,
+        raw_matched=raw_matched,
+        exp_matched=exp,
+        expected=exp_all,
         var=var,
+        var_all=var_all,
         z=z,
     )
 
 
-_GENOME: tuple | None = None  # (by_rs, by_pos, build) — fork-shared
+_GENOME: tuple | None = None  # (by_rs, by_pos, build, af_lookup) — fork-shared
 
 
 def _score_worker(item):
     pgs_id, wf = item
-    by_rs, by_pos, build = _GENOME  # type: ignore[misc]
-    return score_one(by_rs, by_pos, wf, build)
+    by_rs, by_pos, build, af_lookup = _GENOME  # type: ignore[misc]
+    return score_one(by_rs, by_pos, wf, build, af_lookup)
+
+
+# ----------------------------------------------------------- AF sidecar
+
+AF_SIDECAR = "weight_snp_af_grch37.tsv.gz"
+_AF_CACHE: dict[str, tuple[dict, dict] | None] = {}
+
+
+def load_af_sidecar(super_pop: str = "EUR") -> tuple[dict, dict] | None:
+    """1KG allele frequencies for weight-file SNPs, as (by_rsid, by_chrom_pos)
+    lookups of (ref, alt, alt_af) for the given super-population.
+
+    Built once by reference/build_af_sidecar.py and shipped so users don't
+    need the 1KG download; looked for in the data dir, then the package
+    resources. Returns None if the sidecar isn't available.
+    """
+    if super_pop in _AF_CACHE:
+        return _AF_CACHE[super_pop]
+    path = next(
+        (p / AF_SIDECAR for p in (data_dir(), RESOURCES) if (p / AF_SIDECAR).exists()),
+        None,
+    )
+    if path is None:
+        _AF_CACHE[super_pop] = None
+        return None
+    by_rs: dict[str, tuple] = {}
+    by_pos: dict[tuple[str, int], tuple] = {}
+    with open_maybe_gz(path) as f:
+        hdr = f.readline().rstrip().split("\t")
+        ix = {c: i for i, c in enumerate(hdr)}
+        pop_cols = [ix[p] for p in ("AFR", "AMR", "EAS", "EUR", "SAS") if p in ix]
+        i_pop = ix.get(super_pop)
+        if i_pop is None and not pop_cols:
+            _AF_CACHE[super_pop] = None
+            return None
+        for line in f:
+            r = line.rstrip("\n").split("\t")
+            try:
+                af = (
+                    float(r[i_pop])
+                    if i_pop is not None
+                    else sum(float(r[i]) for i in pop_cols) / len(pop_cols)
+                )
+                rec = (r[ix["ref"]], r[ix["alt"]], af)
+                by_pos[(r[ix["chrom"]], int(r[ix["pos"]]))] = rec
+            except (ValueError, IndexError):
+                continue
+            if r[ix["rsid"]].startswith("rs"):
+                by_rs[r[ix["rsid"]]] = rec
+    _AF_CACHE[super_pop] = (by_rs, by_pos)
+    return _AF_CACHE[super_pop]
 
 
 # ------------------------------------------------------------- normalization
@@ -244,6 +359,29 @@ def _normalize(pgs_id, r, *, pcs, pca_model, ref_pop_stats, trait=None) -> tuple
     # for the score's filename stem at build time. Try the full pgs_id, then
     # the first token (handles "COGNITION_mtag_sbayesrc" → "COGNITION"), then
     # the trait name as a forward-compat key.
+    # Normalize the matched-only sum: mean-imputed sites are already at
+    # their population expectation, so including them would double-count
+    # the f·μ term and bias z by a constant for every genome.
+    raw = r.get("raw_matched", r["raw"])
+
+    # Chip coverage of small panels is far from random, so f·μ and √f are
+    # poor stand-ins for the matched subset's mean and SD. When the weight
+    # file gives a frequency for (nearly) every SNP, center on the matched
+    # subset's own expectation — shifted by the matched share of the gap
+    # between the full-score reference mean and the frequency-implied mean
+    # (the ancestry adjustment) — and scale by the matched share of the
+    # frequency-implied variance. With random missingness this reduces to
+    # the f·μ / √f form.
+    def _z_from(full_mean: float, full_sd: float) -> float:
+        if (
+            r.get("var_all", 0) > 0
+            and r.get("var", 0) > 0
+            and r.get("n_af", 0) >= 0.95 * r["n_total"]
+        ):
+            center = r["exp_matched"] + f * (full_mean - r["expected"])
+            return (raw - center) / (full_sd * sqrt(r["var"] / r["var_all"]))
+        return (raw - f * full_mean) / (full_sd * sqrt(f))
+
     coef = None
     if pcs is not None and pca_model is not None:
         coef = next(
@@ -253,12 +391,12 @@ def _normalize(pgs_id, r, *, pcs, pca_model, ref_pop_stats, trait=None) -> tuple
         intercept, b, resid_sd = coef
         if resid_sd > 0:
             pred = intercept + sum(bk * pk for bk, pk in zip(b, pcs))
-            z = (r["raw"] - f * pred) / (resid_sd * sqrt(f))
+            z = _z_from(pred, resid_sd)
             return z, _z_to_pct(z), "pc-adjusted"
     ref = next((ref_pop_stats[k] for k in keys if k and k in ref_pop_stats), None)
     if ref is not None:
         mean, sd, _ = ref
-        z = (r["raw"] - f * mean) / (sd * sqrt(f))
+        z = _z_from(mean, sd)
         return z, _z_to_pct(z), "ref-pop"
     if r["var"] > 0:
         return r["z"], _z_to_pct(r["z"]), "hwe"
@@ -328,8 +466,15 @@ def score_genome(
     if ref_pop is None:
         ref_pop = max(admix, key=lambda k: admix[k]) if admix else "EUR"
     ref_stats = load_reference(ref_pop)
+    af_lookup = load_af_sidecar(ref_pop)
     if verbose:
         print(f"  reference: {len(ref_stats)} scores ({ref_pop})", file=sys.stderr)
+        if af_lookup is not None:
+            print(
+                f"  AF sidecar: {len(af_lookup[1]):,} SNPs "
+                f"(non-random-coverage correction enabled)",
+                file=sys.stderr,
+            )
 
     pgs_to_trait = {s.pgs_id: trait for trait, s in CURATED.items()}
     results = []
@@ -342,7 +487,7 @@ def score_genome(
         max(1, n_jobs if n_jobs is not None else (os.cpu_count() or 4)),
     )
     global _GENOME
-    _GENOME = (by_rs, by_pos, build)
+    _GENOME = (by_rs, by_pos, build, af_lookup)
     if n_workers > 1 and sys.platform != "win32":
         ctx = mp.get_context("fork")
         with ctx.Pool(n_workers) as pool:
@@ -399,6 +544,79 @@ def score_genome(
     return results, meta
 
 
+def missingness_warning(results: list[ScoreResult]) -> str | None:
+    """Warning text when enough weight-file SNPs are missing from the
+    genome that imputation would materially improve the z-scores.
+
+    The partial-overlap correction keeps partial sums on the right scale,
+    but it cannot recover the information in the missing SNPs: at overlap
+    fraction f the un-imputed z-score carries extra noise on the order of
+    √(1-f) SD. On top of that, the correction assumes the matched SNPs are
+    a random sample of the panel; chip content isn't random, so at low
+    overlap individual scores can pick up offsets of several SD — extreme
+    z-scores at low overlap are called out as likely artifacts.
+    Returns None when overlap is high enough not to matter.
+    """
+    overlaps = sorted(r.overlap for r in results if r.z is not None)
+    if not overlaps:
+        return None
+    median = overlaps[len(overlaps) // 2]
+    # Scores dominated by mean-imputed sites are only worth calling out
+    # individually when overall coverage is otherwise fine; on a low-overlap
+    # array the genome-wide warning above already says it for every score.
+    mostly_imputed = (
+        [r for r in results if r.z is not None and r.n_imputed > r.n_matched]
+        if median >= 0.9
+        else []
+    )
+    suspect = [
+        r for r in results if r.z is not None and abs(r.z) >= 3 and r.overlap < 0.5
+    ]
+    if median >= 0.9 and not mostly_imputed and not suspect:
+        return None
+    L = []
+    if median < 0.9:
+        L += [
+            f"! WARNING: only {median:.0%} of weight-file SNPs (median across "
+            f"scores) were found in this genome.",
+            "  Un-imputed array data gives usable but noisy z-scores (roughly "
+            f"±{sqrt(1 - median):.1f} SD of extra error at this overlap).",
+            "  Impute first for tighter estimates:",
+            "    genepred impute beagle <genotype-file>     # local, ~10 min",
+            "    genepred impute michigan submit <genotype-file>",
+            "  then re-run `genepred score` on the imputed VCF.",
+        ]
+    if suspect:
+        L += [
+            ("! WARNING: " if not L else "  ")
+            + "extreme z-scores at low SNP overlap — treat as artifacts, "
+            "not findings:",
+        ]
+        L += [
+            f"    {r.trait:<28} {r.pgs_id:<14} z={r.z:+5.1f}  matched "
+            f"{r.n_matched:,}/{r.n_total:,} ({r.overlap:.0%})"
+            for r in sorted(suspect, key=lambda r: -abs(r.z or 0.0))
+        ]
+        L += [
+            "  The SNPs a chip covers are not a random sample of a score's "
+            "panel, so at low overlap the partial-overlap",
+            "  correction can be off by several SD for individual scores. "
+            "These values will change after imputation;",
+            "  do not interpret them until then.",
+        ]
+    if mostly_imputed:
+        L += [
+            ("! WARNING: " if not L else "  ")
+            + "scores where most SNPs were filled in at the population mean "
+            "(treat with extra caution):",
+        ]
+        L += [
+            f"    {r.trait:<28} {r.pgs_id}  matched {r.n_matched:,}/{r.n_total:,}"
+            for r in mostly_imputed
+        ]
+    return "\n".join(L)
+
+
 def _trait_pct(z: float, r2: float) -> tuple[float, float, float]:
     """(point, lo95, hi95) trait-percentile given PGS z and predictor R²."""
     shift = z * sqrt(max(0.0, r2))
@@ -432,6 +650,9 @@ def format_results(results: list[ScoreResult], meta: dict) -> str:
             f"{r.trait:<{tw}} {r.pgs_id:<{pw}} {r.n_total:>9,} {r.n_matched:>8,} "
             f"{r.overlap:>7.1%} {zstr:>9} {pstr:>8} {tpstr}"
         )
+    miss = missingness_warning(results)
+    if miss:
+        out += ["", miss]
     out += [
         "",
         f"PGS pct  = where the score falls in the 1KG-{pop} score "
@@ -616,6 +837,9 @@ def format_report(results: list[ScoreResult], meta: dict, source: str = "") -> s
         f"{'TOTAL (vs population mean)':<58} "
         f"{a['total_qaly']:+8.3f} {a['total_cost']:+10,.0f}",
     ]
+    miss = missingness_warning(results)
+    if miss:
+        L += ["", miss]
     n_scored = len(a["disease"]) + len(a["continuous"])
     n_unscored = len(a["unscored"])
     if n_unscored > n_scored:
