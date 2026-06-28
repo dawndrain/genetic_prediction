@@ -39,8 +39,13 @@ import argparse
 import sys
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
+
+# Allow running as `python validation/embryo_phasing_bench.py` without an
+# installed genepred.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from genepred import embryo as E
 from genepred.io import parse_chroms

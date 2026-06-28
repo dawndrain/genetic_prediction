@@ -67,6 +67,51 @@ python validation/embryo_phasing_bench.py --chroms 22 --ser 0.01 \
 embryo reads per parental switch interval. R ≳ 50 → near-oracle;
 R ≈ 25 → good (selection works); R ≲ 5 → unreliable.
 
+## Amplification realism: allele dropout + coverage dispersion
+
+The tables above use an idealised read model (Poisson coverage,
+unbiased alleles). Real WGA biopsies add **allelic dropout** (one
+allele of a het fails to amplify and all reads come from the survivor
+— ~1–5 % per site for multi-cell TE biopsies with modern kits, 10–25 %
+for single-cell MDA) and **amplification bias** (per-site coverage is
+over-dispersed; CV ≈ 0.5–1 for MDA). Both are modelled in
+`simulate_biopsy(ado=…, cov_dispersion=…)` and exposed as `--ado` /
+`--cov-dispersion`. PGS r² at SER = 1 %, 0.05×, 8 reps:
+
+| ado / cov-CV | oracle, 3 emb | joint, 3 emb | oracle, 5 emb | joint, 5 emb |
+|---|---|---|---|---|
+| 0 / 0 (idealised) | 1.00 | 0.85 | 1.00 | 0.90 |
+| 0.05 / 0.7 (good multi-cell kit) | 1.00 | 0.76 | 1.00 | 0.89 |
+| 0.10 / 0.7 | 1.00 | 0.80 | 1.00 | 0.88 |
+| 0.20 / 1.0 (single-cell-grade MDA) | 0.98 | 0.74 | 0.98 | 0.87 |
+| 0.20 / 1.0 **+ 1 born sibling** | 0.98 | **0.97** | — | — |
+
+```bash
+python validation/embryo_phasing_bench.py --chroms 22 --ser 0.01 \
+    --cov 0.05 --n-embryos 3,5 --methods oracle,joint --reps 8 \
+    --ado 0.2 --cov-dispersion 1.0 [--n-sibs 1]
+```
+
+Reading the grid:
+
+- With **oracle phase, amplification artifacts are nearly free**
+  (r² ≥ 0.98 even at single-cell-grade noise) — the HMM pools
+  thousands of sites, and ADO mostly recalibrates evidence rather
+  than flipping it. Hard-call het concordance for `joint` barely
+  moves with ado (~87–88 % throughout); the damage shows up in the
+  soft dosages.
+- At **5 embryos** the joint HMM degrades gracefully: 0.90 → 0.87
+  worst-case.
+- At **3 embryos** amplification noise is the binding constraint:
+  0.85 → ~0.74–0.80 (rep noise ±0.04), i.e. realistic artifacts cost
+  another ~5–10 % of selection gain on top of the few-embryo penalty.
+  Treat the rule-of-thumb R as derated ~2× for few embryos with
+  single-cell-grade kits.
+- **One born sibling fully rescues the worst case** (0.97 at 3
+  embryos with ado 20 %, CV 1.0): phasing error, not biopsy noise,
+  remains the binding constraint, and a relative fixes phasing
+  regardless of amplification quality.
+
 ## Recommended fixes, in order of impact
 
 ### 1. Get a relative (best)
