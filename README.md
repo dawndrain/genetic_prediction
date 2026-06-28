@@ -6,9 +6,9 @@ etc.) using polygenic scores from the
 gains from embryo selection.
 
 > **Bottom line:** with today's published polygenic scores, selecting
-> the QALY-best of 5 embryos gives an expected gain of **~0.47 QALY**
-> (~$120k personal value at $100k/QALY) over a randomly-chosen sibling
-> — roughly a quarter of the additive-heritability ceiling. The
+> the QALY-best of 5 embryos gives an expected gain of **~0.56 QALY**
+> (~$143k personal value at $100k/QALY) over a randomly-chosen sibling
+> — roughly thirty percent of the additive-heritability ceiling. The
 > [predictor-scaling analysis](examples/r2_scaling.py) shows how this
 > grows as predictors improve.
 
@@ -178,20 +178,37 @@ data/            # gitignored; PGS weights + 1KG VCFs land here
 
 Three predictors were validated end-to-end against openSNP
 self-reported phenotypes (2,779 23andMe genotypes from the 2017
-Internet Archive snapshot, scored without imputation):
+Internet Archive snapshot, scored without imputation). The validation
+projects every genome onto the 1KG ancestry PCs and reports
+European-ancestry results — the scores are standardized against EUR
+references, so non-EUR genomes get wildly mis-scaled values (see note
+below):
 
-| Trait | PGS | Observed R² | n | Expected after attenuation |
+| Trait | PGS | Observed R² (EUR) | n | Expected after attenuation |
 |---|---|---|---|---|
-| Height | PGS002804 (Yengo 2022, 1.1M SNPs) | 0.16 (males) / 0.04 (females) | 317 / 221 | ~0.27 |
-| BMI | PGS002313 (Weissbrod 2022) | 0.06 (both sexes) | 83 | ~0.06 |
-| Cognition | homemade (Savage×EA4 → MTAG → LDpred-inf) | r ≈ +0.25 vs IQ / edu years / SAT | 24–52 | — |
+| Height | PGS002804 (Yengo 2022, 1.1M SNPs) | 0.30 (males) / 0.21 (females) | 273 / 196 | ~0.24–0.34 |
+| BMI | PGS002313 (Weissbrod 2022) | 0.11 (both sexes pooled) | 70 | ~0.08 |
+| Cognition | homemade (Savage×EA4 → MTAG → SBayesRC) | r ≈ +0.32–0.35 vs edu years / SAT | 28–91 | — |
 
-All land on the expected attenuation curve: full-overlap population R²
-× ~0.7 (for ~50% array-vs-PGS SNP overlap, given LD redundancy) × ~0.8
-(self-report reliability). The female-height result is anomalously low
-— the predictor's distribution and the height phenotypes both look
-clean by sex, and BMI works fine in females, so it's likely an
-openSNP-specific reporting quirk rather than a pipeline bug; unresolved.
+All land at or slightly above the expected attenuation curve:
+full-overlap population R² × ~0.7–0.85 (for ~50% array-vs-PGS SNP
+overlap, given LD redundancy) × ~0.8 (self-report reliability).
+Self-reported IQ (n = 24) is too sparse and selected to be
+informative. (Provenance: `validation/validate_height_archive.py` —
+sex from the openSNP label, falling back to Y-chromosome call counts;
+one genotype per user, keeping the file with the most matched SNPs;
+EUR = nearest 1KG super-population in PC space, the same assignment
+`genepred score` uses for its reference population.)
+
+**Why the ancestry filter matters**: without it, height R² collapses
+to 0.11 (males) / 0.04 (females). openSNP is ~15% non-EUR, and a
+genome standardized against EUR allele frequencies can land 5–15 SD
+from the EUR mean; a handful of such leverage points is enough to
+destroy the per-sex correlations (this was the previously "unresolved"
+female-height anomaly — the female subsample just drew more extreme
+outliers). The same artifact inflates the cross-score
+height↔cognition correlation from its true ≈0.01 (EUR-only, matching
+the small published rg after attenuation) to a spurious +0.27.
 
 The other 17 disease scores pass a genetic-correlation sanity check
 (pairwise PGS correlations across 1KG-EUR match published LDSC rg

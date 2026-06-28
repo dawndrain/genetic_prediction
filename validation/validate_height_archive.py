@@ -17,6 +17,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+# Allow running as `python validation/validate_height_archive.py` without
+# an installed genepred (used for the ancestry-PC projection).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 
 def parse_height_cm(s: str) -> float | None:
     """Coerce free-text height entries to centimetres."""
@@ -44,9 +48,9 @@ def parse_height_cm(s: str) -> float | None:
 ARCHIVE = Path("data/opensnp_archives/opensnp_datadump.2017-12-08.zip")
 WEIGHT_FILES = {
     "height": Path("data/pgs_scoring_files/PGS002804_hmPOS_GRCh38.txt.gz"),
-    "ea": Path("data/pgs_scoring_files/COGNITION_mtag_ldpredinf_hmPOS_GRCh38.txt.gz"),
 }
 for _k, _fn in [
+    ("ea", "COGNITION_mtag_ldpredinf_hmPOS_GRCh38.txt.gz"),
     ("ea_v2", "COGNITION_mtag_sbayesrc_hmPOS_GRCh38.txt.gz"),
     ("ea_v3", "COGNITION_geneticg_sbayesrc_hmPOS_GRCh38.txt.gz"),
     ("ea_v4", "COGNITION_ea4_sbayesrc_hmPOS_GRCh38.txt.gz"),
@@ -59,12 +63,48 @@ for _k, _fn in [
 # Populated in main() before Pool fork; children inherit via COW.
 # rsid -> (ea, oa, eaf, {trait: weight})
 _WEIGHTS: dict[str, tuple[str, str, float | None, dict[str, float]]] = {}
+# rsid -> (ref, alt, alt_af, (load_PC1..k)) — 1KG ancestry-PC loadings
+_LOADINGS: dict[str, tuple] = {}
+_N_PC = 0
+
+
+def _load_pca_loadings():
+    """Shipped 1KG PCA loadings, keyed by rsID for the archive fast path."""
+    from genepred.pca import load_pca
+
+    model = load_pca()
+    rows = {
+        rsid: (ref, alt, af, tuple(loads))
+        for rsid, _chrom, _pos, ref, alt, af, loads in model.loadings
+        if 0.0 < af < 1.0  # monomorphic would zero-divide in the z-scoring
+    }
+    return rows, len(model.pc_cols)
 
 
 def _load_snpinfo_af():
-    """rsID -> (A1, A2, freq_of_A1) from the PRS-CS HapMap3 reference."""
+    """rsID -> (A1, A2, freq_of_A1) from the PRS-CS HapMap3 reference, or —
+    when that file isn't present — from the shipped AF sidecar via
+    genepred.scoring.load_af_sidecar (fetched by `genepred fetch-weights`;
+    covers the weight-file SNPs rather than all of HapMap3, so mean-imputed
+    counts can differ slightly between the two AF sources)."""
     out = {}
     p = Path("data/ld_reference/ldblk_1kg_eur/snpinfo_1kg_hm3")
+    if not p.exists():
+        from genepred.scoring import load_af_sidecar
+
+        lookup = load_af_sidecar("EUR")
+        if lookup is None:
+            print(
+                f"  ({p} not found and no AF sidecar — run `genepred "
+                f"fetch-weights`; scoring without mean-imputation)",
+                file=sys.stderr,
+            )
+            return out
+        by_rs, _ = lookup
+        print(f"  ({p} not found; using EUR AFs from the sidecar)", file=sys.stderr)
+        # sidecar records are (ref, alt, freq_of_alt); snpinfo convention
+        # is (A1, A2, freq_of_A1).
+        return {rs: (alt, ref, af) for rs, (ref, alt, af) in by_rs.items()}
     with open(p) as f:
         f.readline()
         for line in f:
@@ -136,6 +176,8 @@ def _score_entry(name: str):
     n_matched = {t: 0 for t in traits}
     n_imputed = {t: 0 for t in traits}
     n_total = y_called = 0
+    pcs = [0.0] * _N_PC
+    n_pc = 0
     seen: set[str] = set()
     try:
         with zipfile.ZipFile(ARCHIVE) as z, z.open(name) as fh:
@@ -154,6 +196,15 @@ def _score_entry(name: str):
                 if len(gt) != 2 or gt[0] not in "ACGT" or gt[1] not in "ACGT":
                     continue
                 n_total += 1
+                lrec = _LOADINGS.get(rsid)
+                if lrec is not None:
+                    ref, alt, af_l, loads = lrec
+                    if gt[0] in (ref, alt) and gt[1] in (ref, alt):
+                        dl = (gt[0] == alt) + (gt[1] == alt)
+                        zl = (dl - 2 * af_l) / ((2 * af_l * (1 - af_l)) ** 0.5)
+                        for k in range(_N_PC):
+                            pcs[k] += zl * loads[k]
+                        n_pc += 1
                 w = _WEIGHTS.get(rsid)
                 if w is None:
                     continue
@@ -176,6 +227,9 @@ def _score_entry(name: str):
                 raw[t] += wt * d
                 exp[t] += wt * d
                 n_imputed[t] += 1
+        if n_pc > 0:
+            scale = len(_LOADINGS) / n_pc
+            pcs = [p * scale for p in pcs]
         out = dict(
             uid=int(uid),
             sex_label=sex,
@@ -183,6 +237,8 @@ def _score_entry(name: str):
             file=name,
             n_total=n_total,
             y_called=y_called,
+            n_pc_snps=n_pc,
+            **{f"pc{k + 1}": pcs[k] for k in range(min(4, _N_PC))},
         )
         for t in traits:
             out[f"raw_{t}"] = raw[t]
@@ -358,8 +414,14 @@ def _load_phenotypes():
 
 
 def main():
-    global _WEIGHTS
+    global _WEIGHTS, _LOADINGS, _N_PC
     _WEIGHTS = _load_weights_multi(WEIGHT_FILES)
+    _LOADINGS, _N_PC = _load_pca_loadings()
+    if _N_PC < 4:
+        raise SystemExit(
+            f"loadings file has only {_N_PC} PCs; ancestry assignment needs 4"
+        )
+    print(f"  {len(_LOADINGS):,} ancestry-PC loading SNPs", file=sys.stderr)
     n_per = {t: sum(1 for v in _WEIGHTS.values() if t in v[3]) for t in WEIGHT_FILES}
     n_af = sum(1 for v in _WEIGHTS.values() if v[2] is not None)
     print(
@@ -408,6 +470,24 @@ def main():
         )
     print(f"  sex (label+inferred): {df.sex.value_counts().to_dict()}", file=sys.stderr)
 
+    # Ancestry from PC projection (nearest 1KG super-population). openSNP is
+    # ~85% EUR; the rest get badly mis-scaled scores against EUR references,
+    # and a handful of extreme non-EUR leverage points is enough to crush the
+    # per-sex correlations (this was the 2025 'female height anomaly').
+    # Mirrors score_genome's reference-population choice (argmax of
+    # admixture_fractions over PC1-4) so "EUR" here means the same cohort
+    # a `genepred score` user would be normalized against.
+    from genepred.pca import admixture_fractions
+
+    def _pop(row):
+        if row.n_pc_snps < 1000:  # near-origin projection = fabricated pop
+            return "?"
+        fr = admixture_fractions([row.pc1, row.pc2, row.pc3, row.pc4])
+        return max(fr, key=lambda k: fr[k]) if fr else "?"
+
+    df["pop"] = df.apply(_pop, axis=1)
+    print(f"  ancestry: {df['pop'].value_counts().to_dict()}", file=sys.stderr)
+
     df.to_csv("data/opensnp_archive_pgs.tsv", sep="\t", index=False)
     print(f"wrote {len(df)} usable scores", file=sys.stderr)
 
@@ -426,30 +506,33 @@ def main():
 
     uniq = df.sort_values("matched_height", ascending=False).drop_duplicates("uid")
 
+    cog_versions = [
+        ("raw_ea", "v1 LDpred-inf"),
+        ("raw_ea_v2", "MTAG→SBayesRC"),
+        ("raw_ea_v3", "g→SBayesRC"),
+        ("raw_ea_v4", "EA4→SBayesRC"),
+        ("raw_ea_v5", "SavageIQ→SBayesRC"),
+    ]
+    cog_cols = [c for c, _ in cog_versions if c in uniq.columns]
     pairs = [
         ("HEIGHT-PGS → height", "raw_height", "height_cm"),
-        ("COG-PGS v1 (LDpred-inf) → IQ", "raw_ea", "iq"),
-        ("COG-PGS v1 (LDpred-inf) → edu_years", "raw_ea", "edu_years"),
-        ("COG-PGS v1 (LDpred-inf) → SAT (M+V)", "raw_ea", "sat"),
     ]
-    for vk, vn in [
-        ("v2", "MTAG→SBayesRC"),
-        ("v3", "g→SBayesRC"),
-        ("v4", "EA4→SBayesRC"),
-        ("v5", "SavageIQ→SBayesRC"),
-    ]:
-        col = f"raw_ea_{vk}"
+    for col, vn in cog_versions:
         if col in uniq.columns:
             pairs += [
-                (f"COG-PGS {vk} ({vn}) → IQ", col, "iq"),
-                (f"COG-PGS {vk} ({vn}) → edu_years", col, "edu_years"),
-                (f"COG-PGS {vk} ({vn}) → SAT (M+V)", col, "sat"),
+                (f"COG-PGS ({vn}) → IQ", col, "iq"),
+                (f"COG-PGS ({vn}) → edu_years", col, "edu_years"),
+                (f"COG-PGS ({vn}) → SAT (M+V)", col, "sat"),
             ]
+    eur = uniq[uniq["pop"] == "EUR"]
     for trait, x, y in pairs:
         print(f"\n=== {trait} ===")
         rep("all (no sex adj)", uniq, x, y)
+        rep("EUR-only (no sex adj)", eur, x, y)
         for s in ("M", "F"):
             rep(f"  sex={s}", uniq[uniq.sex == s], x, y)
+        for s in ("M", "F"):
+            rep(f"  sex={s}, EUR-only", eur[eur.sex == s], x, y)
         known = uniq[uniq.sex.isin(["M", "F"])].dropna(subset=[x, y]).copy()
         if len(known) > 10:
             known["male"] = (known.sex == "M").astype(int)
@@ -466,25 +549,23 @@ def main():
                 )
 
     print(
-        "\n=== sanity: cor(height-PGS, cog-PGS) — expect small positive (rg≈0.15) ==="
+        "\n=== sanity: cor(height-PGS, cog-PGS), EUR-only — expect small "
+        "positive (rg≈0.15, heavily attenuated) ==="
     )
-    print(
-        f"  v1: {np.corrcoef(uniq.raw_height, uniq.raw_ea)[0, 1]:+.3f} (n={len(uniq)})"
-    )
-    cog_cols = [
-        c
-        for c in ("raw_ea", "raw_ea_v2", "raw_ea_v3", "raw_ea_v4", "raw_ea_v5")
-        if c in uniq.columns
-    ]
-    for c in cog_cols[1:]:
-        v = c.split("_")[-1]
-        print(f"  {v}: {np.corrcoef(uniq.raw_height, uniq[c])[0, 1]:+.3f}")
-    print("\nCognition score sd & cross-correlations:")
+    # All-ancestry cross-score correlations are inflated by population
+    # structure (+0.27 vs +0.01 EUR-only for height×cognition).
+    labels = dict(cog_versions)
     for c in cog_cols:
-        print(f"  sd({c}) = {uniq[c].std():.4e}")
+        print(
+            f"  {labels[c]}: {np.corrcoef(eur.raw_height, eur[c])[0, 1]:+.3f} "
+            f"(n={len(eur)})"
+        )
+    print("\nCognition score sd & cross-correlations (EUR-only):")
+    for c in cog_cols:
+        print(f"  sd({c}) = {eur[c].std():.4e}")
     for i, a in enumerate(cog_cols):
         for b in cog_cols[i + 1 :]:
-            print(f"  cor({a}, {b}) = {np.corrcoef(uniq[a], uniq[b])[0, 1]:+.3f}")
+            print(f"  cor({a}, {b}) = {np.corrcoef(eur[a], eur[b])[0, 1]:+.3f}")
 
 
 if __name__ == "__main__":
