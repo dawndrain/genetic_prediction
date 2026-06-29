@@ -305,3 +305,78 @@ def test_pharmgx_call_diplotype():
     rep = px.report_pgx(gt_het2)
     assert "CYP2C19" in rep and "Intermediate" in rep
     assert len(px.CPIC_GENES) >= 10
+
+
+def test_mendelian_conflicts_detected_and_masked():
+    child = np.array([0, 2, 1, 1, 1, 1])
+    gp1 = np.array([2, 0, 0, 1, -1, 0])  # site0: gp1 hom-alt, child 0 -> conflict
+    gp2 = np.array([0, 0, 2, 1, 2, 0])   # site1: both hom-ref, child 2 -> conflict
+    # site5: both gps hom-ref but child het -> conflict at a HET site
+    bad = E.mendelian_conflicts(child, gp1, gp2)
+    assert bad.tolist() == [True, True, False, False, False, True]
+    hap, resolved = E.trio_phase(child, gp1, gp2)
+    # the conflicted het site must not become an anchor (hom-site phase
+    # stays trivially resolved regardless of conflicts)
+    assert not resolved[5]
+    # clean het sites still resolve: site2 gp1 hom-ref -> hap0=0; site4 gp2 hom-alt
+    assert resolved[2] and hap[0, 2] == 0 and hap[1, 2] == 1
+    assert resolved[4] and hap[1, 4] == 1 and hap[0, 4] == 0
+    # site3: both gps het/unphasable -> unresolved
+    assert not resolved[3]
+
+
+def test_anchor_correct_phase_removes_switches():
+    """Grandparent anchors + Viterbi remove injected long-range switch
+    errors from a statistically phased haplotype."""
+    par = _synthetic_parents(M=20_000, seed=5)
+    rng = np.random.default_rng(7)
+    truth = par.pat
+    obs, _ = E._inject_switches(truth, 0.01, rng)
+    geno = truth.sum(0)
+    gp1, gp2 = E.simulate_grandparents(truth, rng, geno_err=0.002)
+
+    het = truth[0] != truth[1]
+
+    def long_range_disagreement(hap):
+        # fraction of het sites on the wrong haplotype, best global flip
+        d = (hap[0, het] != truth[0, het]).mean()
+        return min(d, 1 - d)
+
+    before = long_range_disagreement(obs)
+    corrected, info = E.anchor_correct_phase(obs, geno, gp1, gp2)
+    after = long_range_disagreement(corrected)
+    assert info["n_anchors"] > 100
+    assert before > 0.05          # switches really corrupted the phase
+    assert after < before / 5     # and the anchors removed them
+    assert after < 0.02
+    # genotypes are untouched — only phase changes
+    assert (corrected.sum(0) == geno).all()
+
+
+def test_joint_recover_per_parent_switch_rate(par):
+    """switch_rate can be a (paternal, maternal) pair; scalar behavior
+    is unchanged."""
+    truth, biop = _make_embryos(par, 3, 0.05)
+    g_scalar, *_ = E.joint_recover(par, biop, 0.01, switch_rate=1e-4)
+    g_tuple, *_ = E.joint_recover(par, biop, 0.01, switch_rate=(1e-4, 1e-4))
+    assert (g_scalar == g_tuple).all()
+
+
+def test_align_relative_build_mismatch_raises(par):
+    by_pos = {("22", 1): ("A", "G")}  # nothing on the grid
+    with pytest.raises(ValueError, match="build"):
+        E.align_relative_to_parents(by_pos, par)
+
+
+def test_align_relative_maps_strand_and_dosage(par):
+    # take the father's genotypes as the "relative" on the same grid
+    geno_true = par.pat.sum(0)
+    by_pos = {}
+    for i in range(0, len(par.pos), 2):  # every other site, mixed strands
+        a1 = par.alt[i] if par.pat[0, i] else par.ref[i]
+        a2 = par.alt[i] if par.pat[1, i] else par.ref[i]
+        by_pos[(par.chrom, int(par.pos[i]))] = (a1, a2)
+    geno, n = E.align_relative_to_parents(by_pos, par)
+    covered = geno >= 0
+    assert n == covered.sum() == len(by_pos)
+    assert (geno[covered] == geno_true[covered]).all()

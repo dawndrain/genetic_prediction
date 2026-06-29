@@ -293,45 +293,256 @@ def apply_switch_errors(
     return replace(par, pat=pat_obs, mat=mat_obs), pat_swap, mat_swap
 
 
+def align_relative_to_parents(
+    by_pos: dict, par: Parents, *, min_match: float = 0.2
+) -> tuple[np.ndarray, int]:
+    """Map a relative's genotypes (genepred.io.load_genotypes by_pos dict)
+    onto the parents' site grid as ALT-dosage 0/1/2 (-1 = missing).
+
+    Handles the boring failure modes so callers don't have to: imputed
+    (ref, alt, dosage) tuples are hard-called; strand flips are resolved
+    by complement; strand-ambiguous A/T and C/G grid sites are dropped
+    entirely — for anchoring, one confidently wrong homozygous call is
+    worse than a missing one, and a palindromic SNP's direct-vs-flipped
+    report is indistinguishable. Raises if the fraction of grid sites
+    with a usable call is below `min_match` — that pattern means a
+    wrong genome build (positions don't line up), not a sparse chip.
+
+    Returns (geno (M,) int8, n_matched)."""
+    from genepred.io import COMPLEMENT, hard_call
+
+    M = len(par.pos)
+    geno = np.full(M, -1, dtype=np.int8)
+    n_matched = 0
+    # Iterate the (sparser) relative, not the grid: cost scales with the
+    # chip, and grid sites the chip lacks stay missing for free.
+    pos2i = {int(p): i for i, p in enumerate(par.pos)}
+    for (chrom, pos), g in by_pos.items():
+        if chrom != par.chrom:
+            continue
+        i = pos2i.get(pos)
+        if i is None:
+            continue
+        ref, alt = par.ref[i], par.alt[i]
+        if ref == alt.translate(COMPLEMENT):
+            continue  # palindromic A/T or C/G site: unorientable
+        a1, a2 = hard_call(g)
+        pair = {ref, alt}
+        if {a1, a2} <= pair:
+            geno[i] = (a1 == alt) + (a2 == alt)
+            n_matched += 1
+        elif {a1.translate(COMPLEMENT), a2.translate(COMPLEMENT)} <= pair:
+            c1, c2 = a1.translate(COMPLEMENT), a2.translate(COMPLEMENT)
+            geno[i] = (c1 == alt) + (c2 == alt)
+            n_matched += 1
+    if M and n_matched / M < min_match:
+        raise ValueError(
+            f"relative matches only {n_matched:,}/{M:,} "
+            f"({n_matched / M:.0%}) of the parental grid on chr{par.chrom} — "
+            f"likely a genome-build mismatch (parents are GRCh37); "
+            f"lift over or re-export the relative's data."
+        )
+    return geno, n_matched
+
+
+def simulate_grandparents(
+    hap2: np.ndarray, rng: np.random.Generator, geno_err: float = 0.0
+) -> tuple[np.ndarray, np.ndarray]:
+    """Unphased genotypes for the two parents of a person with haplotypes
+    `hap2` (2, M): grandparent k contributed hap k; their other allele is
+    drawn from a per-site frequency proxy. `geno_err` flips single calls
+    at that rate (for benching the Mendelian-conflict filter).
+
+    Returns (gp1_geno, gp2_geno), each (M,) int dosage 0/1/2."""
+    M = hap2.shape[1]
+    af = np.clip(hap2.mean(0), 0.05, 0.95)
+    gps = []
+    for k in (0, 1):
+        g = hap2[k].astype(np.int64) + (rng.random(M) < af).astype(np.int64)
+        if geno_err > 0:
+            hit = rng.random(M) < geno_err
+            shift = rng.integers(1, 3, size=M)  # ±1/±2 mod 3 keeps it in range
+            g[hit] = (g[hit] + shift[hit]) % 3
+        gps.append(g)
+    return gps[0], gps[1]
+
+
+def _gp_hom_allele(g: np.ndarray | None) -> np.ndarray | None:
+    """Per-site homozygous allele of a grandparent genotype (0/1), or -1
+    where the grandparent is het or missing (negative dosage = no call)."""
+    return None if g is None else np.where((g == 0) | (g == 2), g // 2, -1)
+
+
+def mendelian_conflicts(
+    child_geno: np.ndarray,
+    gp1_geno: np.ndarray | None,
+    gp2_geno: np.ndarray | None,
+) -> np.ndarray:
+    """Sites where the child's genotype is Mendelian-impossible given the
+    grandparents — almost always a genotyping error in one of the three
+    (expect ~0.1–1 % of sites), or a build/sample mix-up when the rate
+    is much larger.
+
+    A homozygous grandparent must transmit its allele, so the child must
+    carry ≥1 copy of it; if both grandparents are homozygous the child's
+    genotype is fully determined. Missing calls (negative) never
+    conflict. Returns (M,) bool."""
+    a1, a2 = _gp_hom_allele(gp1_geno), _gp_hom_allele(gp2_geno)
+    conflict = np.zeros(len(child_geno), dtype=bool)
+    for a in (a1, a2):
+        if a is None:
+            continue
+        conflict |= ((a == 1) & (child_geno == 0)) | ((a == 0) & (child_geno == 2))
+    if a1 is not None and a2 is not None:
+        both = (a1 >= 0) & (a2 >= 0) & (child_geno >= 0)
+        conflict |= both & (child_geno != a1 + a2)
+    return conflict
+
+
 def trio_phase(
     child_geno: np.ndarray,
     gp1_geno: np.ndarray | None,
     gp2_geno: np.ndarray | None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Mendelian phasing of `child_geno` (the embryo's parent) from
-    one or both of *their* parents' unphased genotypes (dosage 0/1/2).
+    one or both of *their* parents' unphased genotypes (dosage 0/1/2;
+    negative = missing call).
 
     At each het site of the child where at least one grandparent is
     homozygous, the parent-of-origin of each allele is determined.
     Resolves ~70–90 % of hets with zero switch errors; the remaining
     sites (both grandparents het) are left as 0|1 — they are
     individually ambiguous but, being scattered, do not introduce
-    long-range switches.
+    long-range switches. Mendelian-conflict sites (genotyping errors —
+    see mendelian_conflicts) are excluded rather than allowed to force
+    a wrong anchor.
 
     Returns (hap (2, M) int8 ordered [from-gp1, from-gp2], resolved (M,) bool)."""
+    hap, resolved, _ = _trio_phase_full(child_geno, gp1_geno, gp2_geno)
+    return hap, resolved
+
+
+def _trio_phase_full(
+    child_geno: np.ndarray,
+    gp1_geno: np.ndarray | None,
+    gp2_geno: np.ndarray | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """trio_phase plus the Mendelian-conflict mask it used (computed once,
+    so callers reporting conflict counts can't drift from the masking)."""
     M = len(child_geno)
     hap = np.zeros((2, M), dtype=np.int8)
     hom = (child_geno == 2).astype(np.int8)
     hap[0] = hap[1] = hom
     het = child_geno == 1
     resolved = ~het
+    bad = mendelian_conflicts(child_geno, gp1_geno, gp2_geno)
 
-    def hom_allele(g):
-        return None if g is None else np.where((g == 0) | (g == 2), g // 2, -1)
-
-    a1, a2 = hom_allele(gp1_geno), hom_allele(gp2_geno)
+    a1, a2 = _gp_hom_allele(gp1_geno), _gp_hom_allele(gp2_geno)
     if a1 is not None:
-        m = het & (a1 >= 0)
+        m = het & ~bad & (a1 >= 0)
         hap[0, m] = a1[m]
         hap[1, m] = 1 - a1[m]
         resolved |= m
     if a2 is not None:
-        m = het & ~resolved & (a2 >= 0)
+        m = het & ~bad & ~resolved & (a2 >= 0)
         hap[1, m] = a2[m]
         hap[0, m] = 1 - a2[m]
         resolved |= m
+    resolved &= ~(bad & het)
     hap[1, het & ~resolved] = 1  # arbitrary 0|1 at unresolved hets
-    return hap, resolved
+    return hap, resolved, bad
+
+
+def anchor_correct_phase(
+    hap: np.ndarray,
+    child_geno: np.ndarray,
+    gp1_geno: np.ndarray | None,
+    gp2_geno: np.ndarray | None,
+    *,
+    anchor_err: float = 0.005,
+    switch_prior: float = 0.01,
+) -> tuple[np.ndarray, dict]:
+    """Fix long-range switch errors in a statistically phased haplotype
+    pair using Mendelian anchors from one or two grandparents.
+
+    Grandparent-resolved het sites give the true hap orientation at
+    ~70–90 % of hets with zero switch error; the statistical phase
+    supplies the within-segment detail the anchors can't see. A 2-state
+    Viterbi over the anchor sequence (states: hap rows swapped / not;
+    emission error `anchor_err` absorbs genotyping errors that slip
+    past the Mendelian-conflict filter; transition probability scales
+    `switch_prior` by the het distance between anchors) finds the
+    maximum-likelihood piecewise flip track, applied to `hap` with cuts
+    at midpoints between disagreeing anchors.
+
+    The statistical phase is kept wherever anchors are silent, so
+    isolated point flips survive — those are harmless to the embryo
+    HMM; only the long-range switches it cannot follow are removed.
+
+    Returns (hap_corrected (2, M) int8, info dict: n_anchors,
+    n_conflicts, n_flip_segments, residual_anchor_disagreement)."""
+    M = hap.shape[1]
+    anchor_hap, resolved, bad = _trio_phase_full(child_geno, gp1_geno, gp2_geno)
+    n_conflicts = int(bad.sum())
+    het = hap[0] != hap[1]
+    anchors = np.flatnonzero(resolved & het & (child_geno == 1))
+    info = {
+        "n_anchors": int(len(anchors)),
+        "n_conflicts": n_conflicts,
+        "n_flip_segments": 0,
+        "residual_anchor_disagreement": 0.0,
+    }
+    if len(anchors) < 2:
+        return hap.copy(), info
+
+    agree = hap[0, anchors] == anchor_hap[0, anchors]
+    het_idx = np.flatnonzero(het)
+    gaps = np.diff(np.searchsorted(het_idx, anchors))
+    p_sw = np.clip(switch_prior * gaps, 1e-9, 0.5)
+    le_bad, le_ok = np.log(anchor_err), np.log1p(-anchor_err)
+    em = np.empty((len(anchors), 2))
+    em[:, 0] = np.where(agree, le_ok, le_bad)  # state 0: rows as published
+    em[:, 1] = np.where(agree, le_bad, le_ok)  # state 1: rows swapped
+
+    n = len(anchors)
+    dp = np.empty((n, 2))
+    bp = np.zeros((n, 2), dtype=np.int8)
+    dp[0] = em[0]
+    lsw, lst = np.log(p_sw), np.log1p(-p_sw)
+    for i in range(1, n):
+        for s in (0, 1):
+            stay = dp[i - 1, s] + lst[i - 1]
+            swap = dp[i - 1, 1 - s] + lsw[i - 1]
+            if stay >= swap:
+                dp[i, s] = stay + em[i, s]
+                bp[i, s] = s
+            else:
+                dp[i, s] = swap + em[i, s]
+                bp[i, s] = 1 - s
+    states = np.empty(n, dtype=np.int8)
+    states[-1] = int(dp[-1, 1] > dp[-1, 0])
+    for i in range(n - 2, -1, -1):
+        states[i] = bp[i + 1, states[i + 1]]
+
+    # Piecewise-constant flip track: segment boundaries at midpoints
+    # between consecutive anchors whose Viterbi states differ.
+    flip = np.zeros(M, dtype=bool)
+    bounds = [int((anchors[c] + anchors[c + 1] + 1) // 2)
+              for c in np.flatnonzero(np.diff(states))]
+    state = bool(states[0])
+    prev = 0
+    for cut in [*bounds, M]:
+        if state:
+            flip[prev:cut] = True
+        prev = cut
+        state = not state
+
+    out = hap.copy()
+    out[:, flip] = out[::-1, flip]
+    pred_agree = np.where(flip[anchors], ~agree, agree)
+    info["n_flip_segments"] = int(states[0]) + int((np.diff(states) == 1).sum())
+    info["residual_anchor_disagreement"] = float(1.0 - pred_agree.mean())
+    return out, info
 
 
 # ------------------------------------------------------------------ meiosis
@@ -408,6 +619,15 @@ def simulate_biopsy(
 
 
 _STATES = np.array([(0, 0), (0, 1), (1, 0), (1, 1)], dtype=np.int8)
+
+
+def _split_switch_rate(
+    switch_rate: float | tuple[float, float],
+) -> tuple[float, float]:
+    """(paternal, maternal) switch rates from a scalar or pair."""
+    if isinstance(switch_rate, (tuple, list)):
+        return float(switch_rate[0]), float(switch_rate[1])
+    return float(switch_rate), float(switch_rate)
 
 
 def _build_log_T(pos: np.ndarray, recomb_per_bp: float):
@@ -869,7 +1089,7 @@ def joint_recover(
     biopsies: list[tuple[np.ndarray, np.ndarray]],
     err: float,
     recomb_per_bp: float = 1e-8,
-    switch_rate: float = 0.01,
+    switch_rate: float | tuple[float, float] = 0.01,
     n_iter: int = 2,
     decode: str = "posterior",
 ):
@@ -879,7 +1099,12 @@ def joint_recover(
     (`n_iter` rounds), each time conditioning on the other parent's
     current path estimate at doubly-heterozygous sites.
 
+    `switch_rate` may be a scalar or a (paternal, maternal) pair — use
+    the pair when one parent's phase is anchored by a relative
+    (anchor_correct_phase / trio phasing) and the other is statistical.
+
     Returns (genos, dosage, var_dose, ppaths, mpaths) each (E, M)."""
+    sr_pat, sr_mat = _split_switch_rate(switch_rate)
     M = len(par.pos)
     E = len(biopsies)
     if E > 16:
@@ -900,11 +1125,11 @@ def joint_recover(
     for _ in range(n_iter):
         wp, pp1, _ = _joint_one_parent(
             par.pat, par.mat, par.pos, biopsies, err,
-            recomb_per_bp, switch_rate, other_w=wm, decode=decode,
+            recomb_per_bp, sr_pat, other_w=wm, decode=decode,
         )
         wm, pm1, _ = _joint_one_parent(
             par.mat, par.pat, par.pos, biopsies, err,
-            recomb_per_bp, switch_rate, other_w=wp, decode=decode,
+            recomb_per_bp, sr_mat, other_w=wp, decode=decode,
         )
     genos = np.empty((E, M), dtype=np.int8)
     dosage = np.empty((E, M), dtype=np.float64)
@@ -950,7 +1175,7 @@ def joint_recover_full(
     biopsies: list[tuple[np.ndarray, np.ndarray]],
     err: float,
     recomb_per_bp: float = 1e-8,
-    switch_rate: float = 0.01,
+    switch_rate: float | tuple[float, float] = 0.01,
 ):
     """Exact 4^E-state joint over both parents simultaneously.
 
@@ -1017,8 +1242,9 @@ def joint_recover_full(
     n_mhet = np.bincount(
         seg[:-1], weights=(par.mat[0, idx] != par.mat[1, idx])[:-1], minlength=Kc - 1
     )
-    p_sp = np.clip((1 - (1 - 2 * max(switch_rate, 1e-12)) ** n_phet) / 2, 1e-12, 0.49)
-    p_sm = np.clip((1 - (1 - 2 * max(switch_rate, 1e-12)) ** n_mhet) / 2, 1e-12, 0.49)
+    sr_pat, sr_mat = _split_switch_rate(switch_rate)
+    p_sp = np.clip((1 - (1 - 2 * max(sr_pat, 1e-12)) ** n_phet) / 2, 1e-12, 0.49)
+    p_sm = np.clip((1 - (1 - 2 * max(sr_mat, 1e-12)) ** n_mhet) / 2, 1e-12, 0.49)
 
     g4 = np.exp(np.ascontiguousarray(le4[:, keep].reshape(E, Kc, 4)))
     alpha, beta = _fb_wht(
@@ -1078,7 +1304,7 @@ def joint_rephase_recover(
     biopsies: list[tuple[np.ndarray, np.ndarray]],
     err: float,
     recomb_per_bp: float = 1e-8,
-    switch_rate: float = 0.01,
+    switch_rate: float | tuple[float, float] = 0.01,
 ):
     """Two-stage recovery: (1) joint Viterbi over all embryos to detect
     parental switch errors and re-phase the parents; (2) standard
@@ -1095,14 +1321,15 @@ def joint_rephase_recover(
     Returns (genos (E, M) int8, par_rephased, ŝ_pat, ŝ_mat)."""
     M = len(par.pos)
     E = len(biopsies)
+    sr_pat, sr_mat = _split_switch_rate(switch_rate)
 
     wp, _, idx_p = _joint_one_parent(
         par.pat, par.mat, par.pos, biopsies, err,
-        recomb_per_bp, switch_rate, other_w=None, decode="viterbi",
+        recomb_per_bp, sr_pat, other_w=None, decode="viterbi",
     )
     wm, _, idx_m = _joint_one_parent(
         par.mat, par.pat, par.pos, biopsies, err,
-        recomb_per_bp, switch_rate, other_w=wp, decode="viterbi",
+        recomb_per_bp, sr_mat, other_w=wp, decode="viterbi",
     )
     s_pat = _switch_track_from_paths(
         np.stack([wp[e, idx_p] for e in range(E)]), idx_p, M
@@ -1129,7 +1356,14 @@ def joint_rephase_recover(
 
 def load_pgs_for_chrom(chrom: str, par: Parents, weights_dir: Path | None = None):
     """For each weight file present, return
-    {pgs_id: (idx_into_par, ea_is_alt(±1), w)} restricted to this chrom."""
+    {pgs_id: (idx_into_par, ea_is_alt(±1), w)} restricted to this chrom.
+
+    Matching is by the file's native chr_name/chr_position against the
+    parents' GRCh37 grid, so files whose native build isn't GRCh37 are
+    skipped entirely — position-matching GRCh38 (or unreported-build)
+    coordinates against a GRCh37 grid silently scores coincidental wrong
+    SNPs, which showed up as constant multi-sigma offsets in the embryo
+    report (IBD +4σ, AF −8σ, ADHD −13σ for every embryo)."""
     weights_dir = weights_dir or pgs_weights_dir()
     pos_to_idx = {int(p): i for i, p in enumerate(par.pos)}
     out: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
@@ -1138,11 +1372,18 @@ def load_pgs_for_chrom(chrom: str, par: Parents, weights_dir: Path | None = None
         idxs, signs, ws = [], [], []
         with gzip.open(wf, "rt") as f:
             cols: dict[str, int] = {}
+            build = "GRCh37"
             for line in f:
-                if not line.startswith("#"):
-                    cols = {c: i for i, c in enumerate(line.rstrip("\n").split("\t"))}
+                if not line.startswith("#") or "\teffect_weight" in line:
+                    # column row (some files prefix it with '#')
+                    hdr = line.lstrip("#").rstrip("\n").split("\t")
+                    cols = {c: i for i, c in enumerate(hdr)}
                     break
-            if not cols or "chr_name" not in cols:
+                if "genome_build=" in line:
+                    build = line.split("=")[-1].strip()
+            if build not in ("GRCh37", "hg19", "NCBI37"):
+                continue
+            if not cols or "chr_name" not in cols or "chr_position" not in cols:
                 continue
             i_chr = cols["chr_name"]
             i_pos = cols["chr_position"]
@@ -1175,6 +1416,46 @@ def load_pgs_for_chrom(chrom: str, par: Parents, weights_dir: Path | None = None
                     ws.append(w)
         if idxs:
             out[pgs_id] = (np.array(idxs), np.array(signs, dtype=np.int8), np.array(ws))
+    return out
+
+
+def grid_effect_af(par: Parents, af_by_pos: dict) -> np.ndarray:
+    """Per-grid-site ALT-allele frequency from an AF-sidecar by_pos lookup
+    ((chrom, pos) -> (ref, alt, af_alt)); NaN where the site is unknown or
+    the alleles don't match either orientation."""
+    af = np.full(len(par.pos), np.nan)
+    chrom = par.chrom
+    for j, p in enumerate(par.pos):
+        rec = af_by_pos.get((chrom, int(p)))
+        if rec is None:
+            continue
+        ref, alt, a = rec
+        if ref == par.ref[j] and alt == par.alt[j]:
+            af[j] = a
+        elif ref == par.alt[j] and alt == par.ref[j]:
+            af[j] = 1.0 - a
+    return af
+
+
+def pgs_subset_moments(
+    pgs_map, alt_af: np.ndarray
+) -> dict[str, tuple[float, float, int, int]]:
+    """Frequency-implied (mean, variance, n_with_af, n_scored) of each PGS's scored
+    subset on this grid. Used to normalize partial-grid raw sums — a raw
+    sum over a non-random SNP subset compared against full-genome
+    reference moments picks up constant multi-sigma offsets (the same
+    artifact genepred.scoring corrects for partial arrays)."""
+    out = {}
+    for pid, (idx, sgn, w) in pgs_map.items():
+        p = np.where(sgn == 1, alt_af[idx], 1.0 - alt_af[idx])
+        ok = ~np.isnan(p)
+        pw, ww = p[ok], w[ok]
+        out[pid] = (
+            float((2.0 * ww * pw).sum()),
+            float((2.0 * ww * ww * pw * (1.0 - pw)).sum()),
+            int(ok.sum()),
+            int(len(idx)),  # scored SNPs incl. those without AF
+        )
     return out
 
 

@@ -38,7 +38,7 @@ from __future__ import annotations
 import argparse
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -97,9 +97,35 @@ def run_cell(
     n_sibs: int = 0,
     ado: float = 0.0,
     cov_disp: float = 0.0,
+    gp_phase: str = "none",
+    gp_err: float = 0.005,
 ):
     rng_sw = np.random.default_rng((101, rep, int(ser * 1e6)))
     par_obs, _, _ = E.apply_switch_errors(par_true, ser, rng_sw)
+
+    # Grandparent anchoring: simulate the chosen side's grandparents from
+    # the TRUE haplotypes (genotypes are phase-independent, so simulating
+    # from truth is exact), then anchor-correct the switch-errored phase.
+    # A corrected parent runs the joint HMM at a near-zero switch rate.
+    sw_joint: float | tuple[float, float] = max(ser, 1e-4)
+    if gp_phase != "none":
+        rng_gp = np.random.default_rng((606, rep))
+        rates = {"pat": max(ser, 1e-4), "mat": max(ser, 1e-4)}
+        for side in ["pat"] if gp_phase == "father" else ["pat", "mat"]:
+            hap_true = getattr(par_true, side)
+            gp1, gp2 = E.simulate_grandparents(hap_true, rng_gp, geno_err=gp_err)
+            hap_fix, _ = E.anchor_correct_phase(
+                getattr(par_obs, side), hap_true.sum(0), gp1, gp2,
+                switch_prior=max(ser, 1e-3),
+            )
+            par_obs = replace(par_obs, **{side: hap_fix})
+            # Fixed near-zero rate for the corrected parent. Deriving it
+            # from info["residual_anchor_disagreement"] was tried and is
+            # WORSE (98.5% vs 99.4% het-conc at 2 embryos): the residual
+            # reflects grandparent genotyping noise at point anchors, not
+            # remaining long-range switches, so it over-loosens the prior.
+            rates[side] = 1e-4
+        sw_joint = (rates["pat"], rates["mat"])
 
     truth = np.empty((n_emb, len(par_true.pos)), dtype=np.int8)
     biop: list[tuple[np.ndarray, np.ndarray]] = []
@@ -149,17 +175,17 @@ def run_cell(
         elif m == "joint":
             _, rec, _, _, _ = E.joint_recover(
                 par_obs, biop + sib_biop, seq_err,
-                switch_rate=max(ser, 1e-4), n_iter=2,
+                switch_rate=sw_joint, n_iter=2,
             )
             rec = rec[:n_emb]
         elif m == "joint_full":
             _, rec, _, _, _ = E.joint_recover_full(
-                par_obs, biop + sib_biop, seq_err, switch_rate=max(ser, 1e-4),
+                par_obs, biop + sib_biop, seq_err, switch_rate=sw_joint,
             )
             rec = rec[:n_emb]
         elif m == "rephase":
             rec, _, _, _ = E.joint_rephase_recover(
-                par_obs, biop, seq_err, switch_rate=max(ser, 1e-4)
+                par_obs, biop, seq_err, switch_rate=sw_joint
             )
             rec = rec.astype(np.float64)
         else:
@@ -215,6 +241,22 @@ def main():
         default=0.0,
         help="coverage CV from WGA amplification bias (MDA ≈ 0.5–1; 0 = Poisson)",
     )
+    ap.add_argument(
+        "--gp-phase",
+        choices=["none", "father", "both"],
+        default="none",
+        help="anchor-correct the named parent(s)' phase with simulated "
+        "grandparent genotypes (trio_phase + anchor_correct_phase) before "
+        "recovery; joint methods then use a near-zero switch rate for the "
+        "corrected parent",
+    )
+    ap.add_argument(
+        "--gp-err",
+        type=float,
+        default=0.005,
+        help="grandparent genotyping-error rate (exercises the "
+        "Mendelian-conflict filter)",
+    )
     ap.add_argument("--reps", type=int, default=3)
     ap.add_argument("--seq-err", type=float, default=0.01)
     ap.add_argument(
@@ -269,6 +311,7 @@ def main():
                             par, pgs, het_mask, ser, cov, ne, rep,
                             args.seq_err, methods, args.n_sibs,
                             args.ado, args.cov_dispersion,
+                            args.gp_phase, args.gp_err,
                         ):
                             key = (m, ser, cov, ne)
                             if key not in results:

@@ -46,17 +46,34 @@ from genepred.embryo import (
     load_embryo_reads,
     load_parents_cached,
     load_parents_vcf,
+    grid_effect_af,
     load_pgs_for_chrom,
+    pgs_subset_moments,
     pick_parents,
     score_chrom,
     simulate_biopsy,
     simulate_child,
 )
 from genepred.io import parse_chroms as _parse_chroms
-from genepred.paths import resource
+from genepred.paths import pgs_weights_dir, resource
 from genepred.qaly import liability_threshold_risk
 
 _ARGS: argparse.Namespace  # set in main() before Pool fork; inherited by workers
+_AF_BY_POS: dict | None = None  # EUR AF sidecar by_pos; set before fork
+
+
+def _load_af_by_pos():
+    from genepred.scoring import load_af_sidecar
+
+    lk = load_af_sidecar("EUR")
+    if lk is None:
+        print(
+            "  (no AF sidecar — run `genepred fetch-weights`; z-scores fall "
+            "back to full-genome normalization and inflate at partial overlap)",
+            file=sys.stderr,
+        )
+        return None
+    return lk[1]
 
 
 def _do_chrom(chrom):
@@ -64,6 +81,11 @@ def _do_chrom(chrom):
     par_true = load_parents_cached(chrom, a.father, a.mother)
     M = len(par_true.pos)
     pgs = load_pgs_for_chrom(chrom, par_true)
+    mom = (
+        pgs_subset_moments(pgs, grid_effect_af(par_true, _AF_BY_POS))
+        if _AF_BY_POS is not None
+        else {}
+    )
     pmid = score_chrom((par_true.pat.sum(0) + par_true.mat.sum(0)) / 2, pgs)
 
     rng_sw = np.random.default_rng((a.seed, int(chrom), 999))
@@ -124,21 +146,117 @@ def _do_chrom(chrom):
                 var_chrom,
             )
         )
-    return chrom, M, len(ctx.inf_idx), set(pgs), pmid, emb
+    return chrom, M, len(ctx.inf_idx), set(pgs), pmid, emb, mom
 
 
-def _ranking_confidence(rec_total, var_total, pids, args, n_draws: int = 500):
+def _accumulate_moments(mom_total: dict, mom: dict) -> None:
+    for pid, vals in mom.items():
+        t = mom_total.setdefault(pid, [0.0, 0.0, 0, 0])
+        for k, v in enumerate(vals):
+            t[k] += v
+
+
+def _full_file_moments(pids):
+    """pid -> (exp, var, n_af) over the ENTIRE weight file, frequency-
+    implied via the AF sidecar (score_one on an empty genome)."""
+    from genepred.scoring import load_af_sidecar, score_one
+
+    from genepred.catalog import read_header
+
+    lk = load_af_sidecar("EUR")
+    if lk is None:
+        return {}
+    out = {}
+    for wf in sorted(pgs_weights_dir().glob("*_hmPOS_GRCh38.txt.gz")):
+        pid = wf.name.split("_")[0]
+        if pid not in pids:
+            continue
+        # Mirror load_pgs_for_chrom's build filter so the full-file moments
+        # describe the same file the raw sums were scored from.
+        if read_header(wf).get("genome_build", "GRCh37") not in (
+            "GRCh37", "hg19", "NCBI37",
+        ):
+            continue
+        r = score_one({}, {}, wf, af_lookup=lk)
+        out[pid] = (r["expected"], r["var_all"], r["n_af"])
+    return out
+
+
+def _build_normalizers(pids, moments) -> dict[str, tuple[float, float]]:
+    """pid -> (center, scale) for converting partial-grid raw sums to z vs
+    1KG-EUR. With AF-sidecar moments for the scored subset, centers on the
+    subset's frequency-implied mean (plus the matched share of the
+    full-score residual) and scales by the matched share of the
+    frequency-implied variance — the same partial-overlap correction
+    genepred.scoring applies to arrays. Falls back to the raw full-genome
+    (mean, sd), which inflates |z| by multiple sigma at partial overlap."""
+    ref = pd.read_csv(resource("1kg_pgs_summary.tsv"), sep="\t")
+    eur = ref[ref.super_pop == "EUR"].set_index("pgs_id")
+    full = _full_file_moments({p for p in pids if p in (moments or {})})
+    out: dict[str, tuple[float, float]] = {}
+    fallback = []
+    for pid in pids:
+        if pid not in eur.index:
+            continue
+        mu = float(eur.at[pid, "mean"])
+        sd = float(eur.at[pid, "sd"])
+        if sd <= 0:
+            continue
+        m = (moments or {}).get(pid)
+        fm = full.get(pid)
+        # Require the sidecar to cover (nearly) every SNP in the raw sum —
+        # uncovered scored SNPs contribute to raw but not to the center,
+        # which would re-create the constant-offset artifact.
+        if (
+            m
+            and fm
+            and m[2] > 0
+            and m[1] > 0
+            and fm[1] > 0
+            and m[2] >= 0.95 * m[3]
+        ):
+            exp_m, var_m, n_m = m[0], m[1], m[2]
+            exp_all, var_all, n_all = fm
+            n_ref = (
+                float(eur.at[pid, "n_snps"])
+                if "n_snps" in eur.columns and float(eur.at[pid, "n_snps"]) > 0
+                else float(n_all or n_m)
+            )
+            f = min(n_m / n_ref, 1.0)
+            # The residual term charges the gap between the reference's
+            # empirical mean and the frequency-implied mean to the subset.
+            # That is only valid when the frequency sum spans (almost) the
+            # same SNPs the reference scored; otherwise the gap is mostly
+            # the missing SNPs' mean contribution and double-charges the
+            # subset (prostate: 394 of 444 -> a constant -3 sigma). Same
+            # 95% gate genepred.scoring uses.
+            gap = (mu - exp_all) if n_all >= 0.95 * n_ref else 0.0
+            out[pid] = (exp_m + f * gap, sd * (var_m / var_all) ** 0.5)
+        else:
+            out[pid] = (mu, sd)
+            fallback.append(pid)
+    if fallback:
+        print(
+            "  (full-genome normalization for "
+            + ", ".join(sorted(fallback))
+            + " — no AF moments; |z| inflates at partial overlap)",
+            file=sys.stderr,
+        )
+    return out
+
+
+def _ranking_confidence(
+    rec_total, var_total, pids, args, norms=None, n_draws: int = 500
+):
     """Sample each embryo's raw PGS from N(point, √var), convert to
     z vs 1KG-EUR, run through the QALY model, and report how often
     each embryo comes out best across draws."""
-    ref = pd.read_csv(resource("1kg_pgs_summary.tsv"), sep="\t")
-    eur = ref[ref.super_pop == "EUR"].set_index("pgs_id")[["mean", "sd"]].astype(float)
+    if norms is None:
+        norms = _build_normalizers(pids, None)
     id2t = {s.pgs_id: t for t, s in CURATED.items()}
+    id2t["COGNITION"] = "cognitive_ability"  # keep parity with _qaly_report
 
-    usable = [
-        p for p in pids
-        if p in eur.index and id2t.get(p) is not None and float(eur.at[p, "sd"]) > 0
-    ]
+    usable = [p for p in pids if p in norms and id2t.get(p) is not None]
     if not usable:
         return
     n = args.n_embryos
@@ -151,9 +269,8 @@ def _ranking_confidence(rec_total, var_total, pids, args, n_draws: int = 500):
                 raw = rng.normal(
                     rec_total[e].get(pid, 0.0), np.sqrt(var_total[e].get(pid, 0.0))
                 )
-                zsc[id2t[pid]] = (raw - float(eur.at[pid, "mean"])) / float(
-                    eur.at[pid, "sd"]
-                )
+                center, scale = norms[pid]
+                zsc[id2t[pid]] = (raw - center) / scale
             qaly_draws[d, e] = q.compute_all(zsc)["total_qaly_delta"]
     top = np.bincount(qaly_draws.argmax(1), minlength=n)
     mu, sd = qaly_draws.mean(0), qaly_draws.std(0)
@@ -173,13 +290,14 @@ def _ranking_confidence(rec_total, var_total, pids, args, n_draws: int = 500):
     )
 
 
-def _qaly_report(embryo_scores, pgs_ids):
-    """Convert per-embryo genome-wide raw PGS to z (vs 1KG-EUR), then to
-    absolute risk (diseases) or trait shift (continuous), then to QALY,
-    and rank embryos."""
+def _qaly_report(embryo_scores, pgs_ids, norms=None, html_out=None):
+    """Convert per-embryo genome-wide raw PGS to z (vs 1KG-EUR, with the
+    partial-overlap correction when AF moments for the scored subset are
+    available), then to absolute risk (diseases) or trait shift
+    (continuous), then to QALY, and rank embryos."""
 
-    ref = pd.read_csv(resource("1kg_pgs_summary.tsv"), sep="\t")
-    eur = ref[ref.super_pop == "EUR"].set_index("pgs_id")[["mean", "sd"]].astype(float)
+    if norms is None:
+        norms = _build_normalizers(pgs_ids, None)
     id2t = {s.pgs_id: t for t, s in CURATED.items()}
     id2t["COGNITION"] = "cognitive_ability"
 
@@ -194,14 +312,11 @@ def _qaly_report(embryo_scores, pgs_ids):
     qaly_per_emb = np.zeros(n_emb)
     detail = []
     for pid in pgs_ids:
-        if pid not in eur.index:
+        if pid not in norms:
             continue
-        mu = float(eur.at[pid, "mean"])  # type: ignore[arg-type]
-        sd = float(eur.at[pid, "sd"])  # type: ignore[arg-type]
-        if sd <= 0:
-            continue
+        center, scale = norms[pid]
         raw = np.array([s.get(pid, np.nan) for s in embryo_scores], dtype=float)
-        z = (raw - mu) / sd
+        z = (raw - center) / scale
         tk = id2t.get(pid)
         if tk in q.DISEASE_TRAITS:
             dt = q.DISEASE_TRAITS[tk]
@@ -246,7 +361,10 @@ def _qaly_report(embryo_scores, pgs_ids):
         f"vs worst)"
     )
 
-    _write_html(detail, qaly_per_emb, best, n_emb, q)
+    _write_html(
+        detail, qaly_per_emb, best, n_emb, q,
+        out=html_out or "docs/embryo_report.html",
+    )
 
 
 def _write_html(detail, qaly_per_emb, best, n_emb, q, out="docs/embryo_report.html"):
@@ -348,6 +466,7 @@ methods demo on simulated data, not clinical guidance.
 <tr class="total"><td class="trait">TOTAL ΔQALY vs sib mean</td>{qrow}</tr>
 </table>
 </body></html>"""
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text(html)
     print(f"\nHTML report → {out}", file=sys.stderr)
 
@@ -417,14 +536,16 @@ def main(argv: list[str] | None = None):
     conc_n = np.zeros(args.n_embryos)
     all_pids: set[str] = set()
 
-    global _ARGS
+    global _ARGS, _AF_BY_POS
     _ARGS = args
+    _AF_BY_POS = _load_af_by_pos()
 
     n_proc = min(len(chroms), int(os.environ.get("COO_CPUS") or os.cpu_count() or 8))
     print(f"  {n_proc} chromosome workers", file=sys.stderr)
     t0 = time.time()
+    mom_total: dict[str, list[float]] = {}
     with mp.get_context("fork").Pool(n_proc) as pool:
-        for chrom, M, n_inf, pids, pmid, emb in pool.imap_unordered(_do_chrom, chroms):
+        for chrom, M, n_inf, pids, pmid, emb, mom in pool.imap_unordered(_do_chrom, chroms):
             print(
                 f"  [chr{chrom}] {M:,} sites ({n_inf:,} informative, "
                 f"{n_inf / M:.1%}), {len(pids)} scores",
@@ -433,6 +554,7 @@ def main(argv: list[str] | None = None):
             all_pids |= pids
             for pid, v in pmid.items():
                 parent_mid_total[pid] = parent_mid_total.get(pid, 0.0) + v
+            _accumulate_moments(mom_total, mom)
             for e in range(args.n_embryos):
                 cs, cn, st, sr, sv = emb[e]
                 conc_sum[e] += cs
@@ -462,9 +584,13 @@ def main(argv: list[str] | None = None):
     )
 
     if len(chroms) > 1:
-        _qaly_report(true_total, sorted(all_pids))
+        moments = {p: tuple(v) for p, v in mom_total.items()}
+        norms = _build_normalizers(sorted(all_pids), moments)
+        _qaly_report(true_total, sorted(all_pids), norms)
         if args.method == "joint":
-            _ranking_confidence(rec_total, var_total, sorted(all_pids), args)
+            _ranking_confidence(
+                rec_total, var_total, sorted(all_pids), args, norms
+            )
         print("\n--- recovery fidelity (true vs HMM-recovered, genome-wide) ---")
         for pid in sorted(all_pids):
             t = np.array([true_total[e].get(pid, 0) for e in range(args.n_embryos)])
@@ -554,6 +680,8 @@ def score_real_embryos(
     var_total: list[dict[str, float]] = [dict() for _ in range(n_emb)]
     all_pids: set[str] = set()
     cov_est: list[float] = []
+    af_by_pos = _load_af_by_pos()
+    mom_total: dict[str, list[float]] = {}
 
     for chrom in chroms:
         t0 = time.time()
@@ -561,6 +689,10 @@ def score_real_embryos(
         het = (par.pat[0] != par.pat[1]) | (par.mat[0] != par.mat[1])
         pgs = load_pgs_for_chrom(chrom, par)
         all_pids |= set(pgs)
+        if af_by_pos is not None:
+            _accumulate_moments(
+                mom_total, pgs_subset_moments(pgs, grid_effect_af(par, af_by_pos))
+            )
         biops = [
             load_embryo_reads(ev, par, samples[e])
             for e, ev in enumerate(embryo_vcfs)
@@ -590,9 +722,11 @@ def score_real_embryos(
         f"assumed parental SER {switch_rate}",
         file=sys.stderr,
     )
-    _qaly_report(rec_total, sorted(all_pids))
+    moments = {p: tuple(v) for p, v in mom_total.items()}
+    norms = _build_normalizers(sorted(all_pids), moments)
+    _qaly_report(rec_total, sorted(all_pids), norms, html_out=html_out)
     args = argparse.Namespace(n_embryos=n_emb, seed=0)
-    _ranking_confidence(rec_total, var_total, sorted(all_pids), args)
+    _ranking_confidence(rec_total, var_total, sorted(all_pids), args, norms)
     return rec_total, var_total, all_pids
 
 
