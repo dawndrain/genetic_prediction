@@ -18,6 +18,10 @@ python validation/embryo_phasing_validate.py  # real-data SER of 1KG phase via a
 python validate_height_archive.py # score every genome in the archive on
                                    # the curated PGS set; compare to
                                    # self-reported height/BMI/IQ/edu/SAT
+python impute_opensnp_batch.py    # batch-impute the phenotyped genomes
+                                   # (Beagle, one multi-sample VCF/chrom)
+                                   # and re-score: height R2 0.34->0.43 (M)
+                                   # / 0.21->0.34 (F); needs the 1KG panel
 ```
 
 Ancillary checks live in `aux/`:

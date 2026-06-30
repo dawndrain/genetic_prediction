@@ -190,6 +190,16 @@ below):
 | BMI | PGS002313 (Weissbrod 2022) | 0.11 (both sexes pooled) | 70 | ~0.08 |
 | Cognition | homemade (Savage×EA4 → MTAG → SBayesRC) | r ≈ +0.32–0.35 vs edu years / SAT | 28–91 | — |
 
+**With imputation** (`validation/impute_opensnp_batch.py` batch-imputes
+the phenotyped genomes against 1KG with Beagle — one multi-sample VCF
+per chromosome — then re-scores the full panels; build-37 genomes
+only, since the positional conform step scrambles build-36 files):
+height R² rises to **0.43 (males, n=235) / 0.34 (females, n=192)** —
+essentially the predictor's full population R² (0.42) times
+self-report reliability. The array-coverage attenuation is fully
+recovered; un-imputed arrays leave roughly a quarter to a third of the
+predictive R² on the table.
+
 All land at or slightly above the expected attenuation curve:
 full-overlap population R² × ~0.7–0.85 (for ~50% array-vs-PGS SNP
 overlap, given LD redundancy) × ~0.8 (self-report reliability).
