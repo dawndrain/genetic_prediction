@@ -1009,6 +1009,15 @@ def simulate_selection(
     Then compute total QALY for each embryo, pick the best, and compare
     to the sibling average.
 
+    NB: this is a no-attrition ceiling. It assumes the top-ranked embryo
+    becomes a live birth, but live birth per euploid transfer is only
+    ~50-65%; in practice you transfer down the ranked list until one
+    implants, so the child is the best *surviving* embryo, not the best
+    embryo. Simulating that (n=5, 55% per transfer) retains ~62% of the
+    gain. And n_embryos means *euploid* blastocysts -- a typical under-35
+    patient gets ~3 from one retrieval, which retains only ~35%. Scale
+    results by ~0.35-0.6 for a realistic IVF cycle; see README.
+
     Args:
         use_correlations: If True, draw correlated PGS using the genetic
             correlation matrix. If False, draw independently (old behavior).
