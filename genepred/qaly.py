@@ -985,6 +985,36 @@ def format_qaly_results(results: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _select_surviving(
+    scores: np.ndarray,
+    p_livebirth: float,
+    rng: np.random.Generator,
+    maximize: bool = True,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Which embryo actually becomes the child, transferring in rank order.
+
+    Embryos are ranked by `scores` (best first) and transferred one at a
+    time until one implants; each transfer independently reaches live birth
+    with probability `p_livebirth`. Implantation is taken to be independent
+    of the score, so a failed transfer simply drops you to the runner-up --
+    which is why the gain shrinks far less than the failure rate does.
+
+    Returns (index of the born embryo, mask of sims that got a baby at all,
+    transfers used). With p_livebirth=1 this reduces to plain argmax/argmin.
+    """
+    n_sims, n = scores.shape
+    order = np.argsort(-scores if maximize else scores, axis=1)
+    if p_livebirth >= 1.0:
+        ones = np.ones(n_sims, dtype=int)
+        return order[:, 0], ones.astype(bool), ones
+    # Drawn against rank position, not embryo identity: implantation is
+    # independent of PGS, so the k-th transfer is the k-th ranked embryo.
+    took = rng.random((n_sims, n)) < p_livebirth
+    born = took.any(axis=1)
+    rank = np.argmax(took, axis=1)  # first success; 0 where none, masked by `born`
+    return order[np.arange(n_sims), rank], born, rank + 1
+
+
 def simulate_selection(
     n_embryos: int = 5,
     n_simulations: int = 100_000,
@@ -997,6 +1027,7 @@ def simulate_selection(
     rate_money: float | None = None,
     use_survival: bool = True,
     ancestry_ratio: float = 1.0,
+    p_livebirth: float = 1.0,
 ) -> dict:
     """Simulate selecting the best embryo from n siblings by total QALY.
 
@@ -1012,7 +1043,21 @@ def simulate_selection(
     Args:
         use_correlations: If True, draw correlated PGS using the genetic
             correlation matrix. If False, draw independently (old behavior).
+        p_livebirth: Live birth probability per embryo transfer. The default
+            of 1.0 is a no-attrition ceiling -- it assumes the top-ranked
+            embryo becomes a baby. Realistically only ~50-65% of euploid
+            transfers reach live birth (pass ~0.55), so you work down the
+            ranked list and end up with the best *surviving* embryo. The
+            gain does not shrink by the failure rate, though: a failed
+            transfer drops you to the runner-up, which is still good. The
+            effect is closer to shrinking the batch, n_eff ~= p * n, which
+            keeps ~62% of the gain at n=5 and ~77% at n=10. Note also that
+            n_embryos means *euploid* blastocysts; a typical under-35
+            patient gets ~3 from one retrieval, not 5. See README.
     """
+    if not 0.0 < p_livebirth <= 1.0:
+        raise ValueError(f"p_livebirth must be in (0, 1], got {p_livebirth}")
+
     rng = np.random.default_rng(seed)
     rm = rate if rate_money is None else rate_money
 
@@ -1088,10 +1133,15 @@ def simulate_selection(
 
         qaly_matrix += qaly_contrib
 
-    # For each simulation: best embryo vs mean embryo
-    best_qaly = np.max(qaly_matrix, axis=1)
+    # For each simulation: the embryo that actually gets born vs a random one.
+    # Transfer order doesn't change P(live birth) -- 1 - (1-p)^n either way --
+    # so the no-selection counterfactual is still the sibling mean, and the
+    # gain is measured among the runs that produced a baby at all.
+    sim_idx = np.arange(n_simulations)
+    best_idx, born, n_transfers = _select_surviving(qaly_matrix, p_livebirth, rng)
+    best_qaly = qaly_matrix[sim_idx, best_idx]
     mean_qaly = np.mean(qaly_matrix, axis=1)
-    gain = best_qaly - mean_qaly
+    gain = (best_qaly - mean_qaly)[born]
 
     # Also compute savings matrix for the selected embryo
     savings_matrix = np.zeros((n_simulations, n_embryos))
@@ -1117,19 +1167,18 @@ def simulate_selection(
             savings_contrib = trait_sd_shift * trait.savings_per_sd * df_m
         savings_matrix += savings_contrib
 
-    # Select same embryo (by QALY) for savings calculation
-    best_idx = np.argmax(qaly_matrix, axis=1)
-    best_savings = savings_matrix[np.arange(n_simulations), best_idx]
+    # Same born embryo (ranked by QALY) for the savings calculation
+    best_savings = savings_matrix[sim_idx, best_idx]
     mean_savings = np.mean(savings_matrix, axis=1)
-    savings_gain = best_savings - mean_savings
+    savings_gain = (best_savings - mean_savings)[born]
 
-    # Per-trait breakdown: expected z-score of selected embryo
+    # Per-trait breakdown: expected z-score of the embryo that got born
     per_trait_z = {}
     for t_idx, trait_name in enumerate(all_traits):
         if trait_name not in active_set:
             continue
-        selected_z = pgs_draws[np.arange(n_simulations), best_idx, t_idx]
-        per_trait_z[trait_name] = float(np.mean(selected_z))
+        selected_z = pgs_draws[sim_idx, best_idx, t_idx]
+        per_trait_z[trait_name] = float(np.mean(selected_z[born]))
 
     # Per-trait single-trait selection: what if you only selected on this one trait?
     per_trait_solo = {}
@@ -1141,9 +1190,11 @@ def simulate_selection(
         if trait_name in DISEASE_TRAITS:
             trait = DISEASE_TRAITS[trait_name]
             df_q, df_m = _df(trait.typical_onset_age)
-            # For diseases, lower PGS = lower risk = better, so select min
-            best_solo_idx = np.argmin(trait_z, axis=1)
-            selected_z = trait_z[np.arange(n_simulations), best_solo_idx]
+            # For diseases, lower PGS = lower risk = better, so rank ascending
+            solo_idx, solo_born, _ = _select_surviving(
+                trait_z, p_livebirth, rng, maximize=False
+            )
+            selected_z = trait_z[sim_idx, solo_idx][solo_born]
 
             threshold = norm.ppf(1 - trait.prevalence)
             r2 = trait.pgs_r2 * ancestry_ratio
@@ -1159,11 +1210,10 @@ def simulate_selection(
             trait = CONTINUOUS_TRAITS[trait_name]
             df_q, df_m = _df(trait.typical_effect_age)
             # Direction depends on sign of qaly_per_sd (e.g. BMI: lower is better)
-            if trait.qaly_per_sd >= 0:
-                best_solo_idx = np.argmax(trait_z, axis=1)
-            else:
-                best_solo_idx = np.argmin(trait_z, axis=1)
-            selected_z = trait_z[np.arange(n_simulations), best_solo_idx]
+            solo_idx, solo_born, _ = _select_surviving(
+                trait_z, p_livebirth, rng, maximize=trait.qaly_per_sd >= 0
+            )
+            selected_z = trait_z[sim_idx, solo_idx][solo_born]
 
             r2 = trait.pgs_r2 * ancestry_ratio
             trait_sd_shift = selected_z * (r2**0.5)
@@ -1182,6 +1232,11 @@ def simulate_selection(
         "use_correlations": use_correlations,
         "rate": rate,
         "use_survival": use_survival,
+        "p_livebirth": p_livebirth,
+        # 1 - (1-p)^n, independent of the order you transfer in
+        "p_any_livebirth": float(np.mean(born)),
+        "mean_transfers": float(np.mean(n_transfers[born])),
+        "n_eff": p_livebirth * n_embryos,
         "qaly_gain_mean": float(np.mean(gain)),
         "qaly_gain_median": float(np.median(gain)),
         "qaly_gain_p10": float(np.percentile(gain, 10)),
@@ -1213,6 +1268,27 @@ def format_selection_results(results: dict) -> str:
         f"({results['n_simulations']:,} simulations, {corr_label}, {discount_label})"
     )
     lines.append("=" * 72)
+    p_lb = results.get("p_livebirth", 1.0)
+    if p_lb >= 1.0:
+        lines.append("")
+        lines.append(
+            "NB: assumes the top-ranked embryo implants. Only ~50-65% of euploid"
+        )
+        lines.append(
+            "    transfers reach live birth -- pass --p-livebirth 0.55 for a"
+        )
+        lines.append("    realistic cycle (keeps ~62% of the gain at n=5).")
+    else:
+        lines.append("")
+        lines.append(
+            f"Transferring in rank order, {p_lb:.0%} live birth per transfer:"
+        )
+        lines.append(
+            f"    effective batch n_eff = {results['n_eff']:.2f}  ·  "
+            f"{results['mean_transfers']:.2f} transfers to a birth  ·  "
+            f"{results['p_any_livebirth']:.1%} of cycles get a baby"
+        )
+        lines.append("    (gains below are conditional on a live birth)")
     lines.append("")
     lines.append("COMBINED SELECTION (pick embryo with best total QALY):")
     lines.append("")

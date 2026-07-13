@@ -8,9 +8,16 @@ gains from embryo selection.
 > **Bottom line:** with today's published polygenic scores, selecting
 > the QALY-best of 5 embryos gives an expected gain of **~0.56 QALY**
 > (~$143k personal value at $100k/QALY) over a randomly-chosen sibling
-> — roughly thirty percent of the additive-heritability ceiling. The
+> — roughly thirty percent of the additive-heritability ceiling, assuming
+> that embryo comes to term. The
 > [predictor-scaling analysis](examples/r2_scaling.py) shows how this
-> grows as predictors improve.
+> grows as predictors improve. In practice only ~55% of transfers reach
+> live birth, shrinking the effective number of embryos by roughly that
+> amount, and leaving a more realistic **~0.35 QALY**.
+
+**Write-up:** [An Open-Source Repo for Embryo Selection, Validated on
+OpenSNP](https://www.lesswrong.com/posts/FiKAjsdCwoe7oMcYn/an-open-source-repo-for-embryo-selection-validated-on)
+— the LessWrong post introducing this project.
 
 **Slides:** a 17-slide intro to genetic prediction and this pipeline —
 heritability, why linear models work, current predictor R², and what

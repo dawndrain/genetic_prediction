@@ -227,6 +227,14 @@ def cli_mich_fetch(out_dir, password):
     default=None,
     help="Simulate selecting best of N sibling embryos by QALY.",
 )
+@click.option(
+    "--p-livebirth",
+    default=1.0,
+    type=float,
+    help="Live birth probability per transfer (~0.55 is realistic for a "
+    "euploid blastocyst). Default 1.0 assumes the top-ranked embryo "
+    "implants, which is a no-attrition ceiling.",
+)
 @click.option("--no-correlations", is_flag=True)
 @click.option("--only", multiple=True)
 @click.option("--exclude", multiple=True)
@@ -248,6 +256,7 @@ def cli_qaly(
     scores,
     json_in,
     embryos,
+    p_livebirth,
     no_correlations,
     only,
     exclude,
@@ -283,6 +292,7 @@ def cli_qaly(
             rate=rate,
             use_survival=survival,
             ancestry_ratio=ratio,
+            p_livebirth=p_livebirth,
         )
         click.echo(
             json.dumps(r, indent=2) if as_json else _qaly.format_selection_results(r)
