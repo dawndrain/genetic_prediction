@@ -15,6 +15,10 @@ gains from embryo selection.
 > live birth, shrinking the effective number of embryos by roughly that
 > amount, and leaving a more realistic **~0.35 QALY**.
 
+**Write-up:** [An Open-Source Repo for Embryo Selection, Validated on
+OpenSNP](https://www.lesswrong.com/posts/FiKAjsdCwoe7oMcYn/an-open-source-repo-for-embryo-selection-validated-on)
+— the LessWrong post introducing this project.
+
 **Slides:** a 17-slide intro to genetic prediction and this pipeline —
 heritability, why linear models work, current predictor R², and what
 IVF selection buys today:
