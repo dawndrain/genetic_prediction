@@ -131,6 +131,7 @@ def _merge_chrom(chrom, per_sample, kg_vcf, out_path, sample_names, holdout_frac
                 + "\n"
             )
             n_ok += 1
+            common.remove(pos)
     return n_ok, held
 
 
@@ -153,6 +154,24 @@ def _bgzip_tabix(path: Path) -> Path:
     return out
 
 
+def _require_ref_panels(chrom_list: list[str]) -> None:
+    """Fail fast with the exact command to run if any requested
+    chromosome is missing the 1KG reference panel needed for conforming."""
+    missing = [chrom for chrom in chrom_list if next(kg_dir().glob(f"ALL.chr{chrom}.*.vcf.gz"), None) is None]
+    if not missing:
+        return
+    kg = kg_dir()
+    hint = (
+        "The Michigan submission step requires the 1KG Phase 3 panel locally\n"
+        "to conform your raw variants to GRCh37 REF/ALT before upload.\n"
+        "Download it first (~15 GB):\n"
+        "  ./reference/onekg/download_1kg.sh"
+    )
+    raise FileNotFoundError(
+        f"1KG reference panel not found for chr{', chr'.join(missing)}.\n"
+        f"Searched: {kg}/\n\n{hint}"
+    )
+
 def prepare(
     genotype_files: list, out_dir: Path, chroms: str = "1-22", holdout_frac: float = 0.0
 ) -> list[Path]:
@@ -174,7 +193,9 @@ def prepare(
     rng = random.Random(0)
     held_all = {}
     out_files = []
-    for chrom in parse_chroms(chroms):
+    chrom_list = parse_chroms(chroms)
+    _require_ref_panels(chrom_list)
+    for chrom in chrom_list:
         kg = next(kg_dir().glob(f"ALL.chr{chrom}.*.vcf.gz"), None)
         if kg is None:
             print(f"  chr{chrom:>2}: no 1KG panel, skip", file=sys.stderr)
