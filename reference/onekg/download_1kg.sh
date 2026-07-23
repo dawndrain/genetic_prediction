@@ -1,7 +1,7 @@
 #!/bin/bash
 # 1000 Genomes Phase 3 integrated VCFs (GRCh37, ~2504 samples, ~15GB total).
 set -euo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/../.."
 mkdir -p data/1kg
 BASE="https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502"
 
