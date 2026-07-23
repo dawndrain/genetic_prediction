@@ -48,6 +48,7 @@ SERVERS = {
         "api": "https://imputationserver.sph.umich.edu/api/v2",
         "app": "imputationserver2",
         "default_panel": "apps@hrc-r1.1",
+        "default_population": "off",
         "token_env": "MICHIGAN_API_TOKEN",
         "token_file": ".michigan_token",
         "signup": "https://imputationserver.sph.umich.edu",
@@ -56,13 +57,20 @@ SERVERS = {
     # ~97k-WGS TOPMed r3 panel. Separate account + token.
     "topmed": {
         "api": "https://imputation.biodatacatalyst.nhlbi.nih.gov/api/v2",
-        "app": "imputationserver@2.0.0",
+        "app": "imputationserver2",
         "default_panel": "apps@topmed-r3",
+        "default_population": "all",
         "token_env": "TOPMED_API_TOKEN",
         "token_file": ".topmed_token",
         "signup": "https://imputation.biodatacatalyst.nhlbi.nih.gov",
     },
 }
+
+VALID_POPULATIONS_FOR_PANEL = {
+    "apps@hrc-r1.1": {"eur", "off"},
+    "apps@topmed-r3": {"all", "off"}
+}
+
 API = SERVERS["michigan"]["api"]
 _SERVER = "michigan"
 
@@ -305,7 +313,7 @@ def submit(
     *,
     server: str | None = None,
     refpanel: str | None = None,
-    population: str = "mixed",
+    population: str = None,
     job_name: str | None = None,
     holdout_frac: float = 0.0,
     token: str | None = None,
@@ -317,6 +325,13 @@ def submit(
     if server:
         set_server(server)
     refpanel = refpanel or SERVERS[_SERVER]["default_panel"]
+    population = population or SERVERS[_SERVER]["default_population"]
+    if refpanel in VALID_POPULATIONS_FOR_PANEL and population not in VALID_POPULATIONS_FOR_PANEL[refpanel]:
+        raise ValueError(
+            f"Population {population!r} is not supported by reference panel {refpanel!r}. "
+            f"Available populations: {', '.join(sorted(VALID_POPULATIONS_FOR_PANEL[refpanel]))}"
+        )
+
     out_dir = Path(out_dir)
     tok = _token(token)
     files = prepare(genotype_files, out_dir, holdout_frac=holdout_frac)
