@@ -117,19 +117,25 @@ def _merge_chrom(chrom, per_sample, kg_vcf, out_path, sample_names, holdout_frac
             if pos not in common:
                 continue
             row = line.split("\t", 8)
-            r, a = row[3], row[4]
-            if len(r) != 1 or len(a) != 1 or "," in a:
+            r, alt_string = row[3], row[4]
+            if len(r) != 1:
                 continue
-            gts, ok = [], True
+            valid_alts = [alt for alt in alt_string.split(",") if len(alt) == 1]
+            if not valid_alts:
+                continue
+            observed_alts = {allele for sample in per_sample for allele in sample[chrom][pos][1:3]} - {r}
+            if len(observed_alts) > 1:
+                continue
+            if len(observed_alts) == 0:
+                a = valid_alts[0]
+            else:
+                a = next(iter(observed_alts))
+                if a not in valid_alts:
+                    continue
+            gts = []
             for s in per_sample:
                 _, a1, a2 = s[chrom][pos]
-                if {a1, a2} <= {r, a}:
-                    gts.append(f"{int(a1 == a)}/{int(a2 == a)}")
-                else:
-                    ok = False
-                    break
-            if not ok:
-                continue
+                gts.append(f"{int(a1 == a)}/{int(a2 == a)}")
             if holdout_frac > 0 and rng.random() < holdout_frac:
                 held[pos] = (r, a, list(gts))
                 gts = ["./."] * len(gts)
@@ -184,7 +190,7 @@ def prepare(
     genotype_files: list, out_dir: Path, chroms: str = "1-22", holdout_frac: float = 0.0
 ) -> list[Path]:
     """Conform genotype files to multi-sample bgzipped VCFs ready for
-    upload. Pads to ≥3 samples (Michigan's minimum) by duplicating columns."""
+    upload. Pads to ≥5 samples (Michigan's minimum) by duplicating columns."""
     out_dir.mkdir(parents=True, exist_ok=True)
     paths = [Path(f) for f in genotype_files]
     sample_names = [p.stem.split(".")[0] for p in paths]
