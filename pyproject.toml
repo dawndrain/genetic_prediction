@@ -15,6 +15,7 @@ dependencies = [
     "click",
     "requests",
     "tqdm",
+    "numba"
 ]
 
 [project.optional-dependencies]

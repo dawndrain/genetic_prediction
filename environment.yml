@@ -10,6 +10,7 @@ dependencies:
   - click
   - requests
   - tqdm
+  - numba
   # external binaries the imputation/scoring backends shell out to
   - bcftools
   - htslib        # bgzip + tabix

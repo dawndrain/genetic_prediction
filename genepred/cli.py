@@ -165,8 +165,8 @@ def cli_michigan():
 )
 @click.option(
     "--population",
-    default="mixed",
-    type=click.Choice(["eur", "afr", "asn", "amr", "sas", "eas", "mixed", "AA"]),
+    default=None,
+    type=click.Choice(["eur", "afr", "asn", "amr", "sas", "eas", "mixed", "AA", "off", "all"]),
 )
 @click.option(
     "--holdout-frac",

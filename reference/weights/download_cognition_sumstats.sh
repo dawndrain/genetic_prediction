@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")"
+[[ -e data ]] || ln -s ../../data data
+
 mkdir -p data/sumstats
 cd data/sumstats
 

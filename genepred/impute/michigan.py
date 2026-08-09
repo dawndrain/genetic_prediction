@@ -48,6 +48,7 @@ SERVERS = {
         "api": "https://imputationserver.sph.umich.edu/api/v2",
         "app": "imputationserver2",
         "default_panel": "apps@hrc-r1.1",
+        "default_population": "off",
         "token_env": "MICHIGAN_API_TOKEN",
         "token_file": ".michigan_token",
         "signup": "https://imputationserver.sph.umich.edu",
@@ -56,13 +57,20 @@ SERVERS = {
     # ~97k-WGS TOPMed r3 panel. Separate account + token.
     "topmed": {
         "api": "https://imputation.biodatacatalyst.nhlbi.nih.gov/api/v2",
-        "app": "imputationserver@2.0.0",
+        "app": "imputationserver2",
         "default_panel": "apps@topmed-r3",
+        "default_population": "all",
         "token_env": "TOPMED_API_TOKEN",
         "token_file": ".topmed_token",
         "signup": "https://imputation.biodatacatalyst.nhlbi.nih.gov",
     },
 }
+
+VALID_POPULATIONS_FOR_PANEL = {
+    "apps@hrc-r1.1": {"eur", "off"},
+    "apps@topmed-r3": {"all", "off"}
+}
+
 API = SERVERS["michigan"]["api"]
 _SERVER = "michigan"
 
@@ -109,19 +117,25 @@ def _merge_chrom(chrom, per_sample, kg_vcf, out_path, sample_names, holdout_frac
             if pos not in common:
                 continue
             row = line.split("\t", 8)
-            r, a = row[3], row[4]
-            if len(r) != 1 or len(a) != 1 or "," in a:
+            r, alt_string = row[3], row[4]
+            if len(r) != 1:
                 continue
-            gts, ok = [], True
+            valid_alts = [alt for alt in alt_string.split(",") if len(alt) == 1]
+            if not valid_alts:
+                continue
+            observed_alts = {allele for sample in per_sample for allele in sample[chrom][pos][1:3]} - {r}
+            if len(observed_alts) > 1:
+                continue
+            if len(observed_alts) == 0:
+                a = valid_alts[0]
+            else:
+                a = next(iter(observed_alts))
+                if a not in valid_alts:
+                    continue
+            gts = []
             for s in per_sample:
                 _, a1, a2 = s[chrom][pos]
-                if {a1, a2} <= {r, a}:
-                    gts.append(f"{int(a1 == a)}/{int(a2 == a)}")
-                else:
-                    ok = False
-                    break
-            if not ok:
-                continue
+                gts.append(f"{int(a1 == a)}/{int(a2 == a)}")
             if holdout_frac > 0 and rng.random() < holdout_frac:
                 held[pos] = (r, a, list(gts))
                 gts = ["./."] * len(gts)
@@ -131,6 +145,7 @@ def _merge_chrom(chrom, per_sample, kg_vcf, out_path, sample_names, holdout_frac
                 + "\n"
             )
             n_ok += 1
+            common.remove(pos)
     return n_ok, held
 
 
@@ -153,11 +168,29 @@ def _bgzip_tabix(path: Path) -> Path:
     return out
 
 
+def _require_ref_panels(chrom_list: list[str]) -> None:
+    """Fail fast with the exact command to run if any requested
+    chromosome is missing the 1KG reference panel needed for conforming."""
+    missing = [chrom for chrom in chrom_list if next(kg_dir().glob(f"ALL.chr{chrom}.*.vcf.gz"), None) is None]
+    if not missing:
+        return
+    kg = kg_dir()
+    hint = (
+        "The Michigan submission step requires the 1KG Phase 3 panel locally\n"
+        "to conform your raw variants to GRCh37 REF/ALT before upload.\n"
+        "Download it first (~15 GB):\n"
+        "  ./reference/onekg/download_1kg.sh"
+    )
+    raise FileNotFoundError(
+        f"1KG reference panel not found for chr{', chr'.join(missing)}.\n"
+        f"Searched: {kg}/\n\n{hint}"
+    )
+
 def prepare(
     genotype_files: list, out_dir: Path, chroms: str = "1-22", holdout_frac: float = 0.0
 ) -> list[Path]:
     """Conform genotype files to multi-sample bgzipped VCFs ready for
-    upload. Pads to ≥3 samples (Michigan's minimum) by duplicating columns."""
+    upload. Pads to ≥5 samples (Michigan's minimum) by duplicating columns."""
     out_dir.mkdir(parents=True, exist_ok=True)
     paths = [Path(f) for f in genotype_files]
     sample_names = [p.stem.split(".")[0] for p in paths]
@@ -174,7 +207,9 @@ def prepare(
     rng = random.Random(0)
     held_all = {}
     out_files = []
-    for chrom in parse_chroms(chroms):
+    chrom_list = parse_chroms(chroms)
+    _require_ref_panels(chrom_list)
+    for chrom in chrom_list:
         kg = next(kg_dir().glob(f"ALL.chr{chrom}.*.vcf.gz"), None)
         if kg is None:
             print(f"  chr{chrom:>2}: no 1KG panel, skip", file=sys.stderr)
@@ -284,7 +319,7 @@ def submit(
     *,
     server: str | None = None,
     refpanel: str | None = None,
-    population: str = "mixed",
+    population: str = None,
     job_name: str | None = None,
     holdout_frac: float = 0.0,
     token: str | None = None,
@@ -296,6 +331,13 @@ def submit(
     if server:
         set_server(server)
     refpanel = refpanel or SERVERS[_SERVER]["default_panel"]
+    population = population or SERVERS[_SERVER]["default_population"]
+    if refpanel in VALID_POPULATIONS_FOR_PANEL and population not in VALID_POPULATIONS_FOR_PANEL[refpanel]:
+        raise ValueError(
+            f"Population {population!r} is not supported by reference panel {refpanel!r}. "
+            f"Available populations: {', '.join(sorted(VALID_POPULATIONS_FOR_PANEL[refpanel]))}"
+        )
+
     out_dir = Path(out_dir)
     tok = _token(token)
     files = prepare(genotype_files, out_dir, holdout_frac=holdout_frac)
