@@ -378,20 +378,40 @@ def impute(
     n_named = annotate_rsids(out_dir, in_dir, chroms, parallel=min(parallel, 4))
     if n_named:
         print(f"[beagle] restored rsIDs at {n_named:,} sites", file=sys.stderr)
+
+    try:
+        combined = concat(out_dir, chroms)
+        print(f"[beagle] combined + indexed → {combined}", file=sys.stderr)
+    except FileNotFoundError as e:
+        # bcftools/tabix missing — per-chromosome outputs are still usable.
+        print(f"[beagle] skipping concat: {e}", file=sys.stderr)
     return out_dir
 
 
 def concat(out_dir: Path, chroms: str = "1-22") -> Path:
-    """bcftools concat the per-chromosome outputs into all.vcf.gz."""
+    """Re-index the per-chromosome outputs (rsID annotation rewrites them,
+    invalidating any earlier .tbi), bcftools-concat into all.vcf.gz, and
+    index that too — ready for `genepred score`."""
     out = out_dir / "all.vcf.gz"
-    if out.exists():
-        return out
     files = [
-        str(out_dir / f"chr{c}.vcf.gz")
+        out_dir / f"chr{c}.vcf.gz"
         for c in parse_chroms(chroms)
         if (out_dir / f"chr{c}.vcf.gz").exists()
     ]
+    if not files:
+        raise FileNotFoundError(f"no chr*.vcf.gz under {out_dir}")
+    if out.exists() and all(
+        out.stat().st_mtime >= f.stat().st_mtime for f in files
+    ):
+        return out
     bcftools = find_tool("bcftools")
-    subprocess.run([bcftools, "concat", "-Oz", "-o", str(out), *files], check=True)
-    subprocess.run([find_tool("tabix"), "-p", "vcf", str(out)], check=False)
+    tabix = find_tool("tabix")
+    for f in files:
+        tbi = Path(str(f) + ".tbi")
+        if not tbi.exists() or tbi.stat().st_mtime < f.stat().st_mtime:
+            subprocess.run([tabix, "-f", "-p", "vcf", str(f)], check=True)
+    subprocess.run(
+        [bcftools, "concat", "-Oz", "-o", str(out), *map(str, files)], check=True
+    )
+    subprocess.run([tabix, "-f", "-p", "vcf", str(out)], check=True)
     return out

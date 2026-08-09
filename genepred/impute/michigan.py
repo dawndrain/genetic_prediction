@@ -15,9 +15,11 @@ State lives entirely in job.json so the three calls can run in
 different processes / sessions.
 
 Server quirks worth knowing:
-  - Minimum of 5 samples per upload — verified via API ("At least 5
-    samples must be uploaded."). We pad by duplicating columns when
-    fewer are supplied.
+  - Minimum samples per upload: 5 (Michigan), 20 (TOPMed). We pad with
+    real 1KG sample columns (to 10 / 20) — padding with copies of the
+    user's genome makes most sites look monomorphic (no variation
+    across samples), and the servers silently drop those (~74% of a
+    single 23andMe upload).
   - All samples in one submission must pass a cross-sample concordance
     check, so mixing array vendors (e.g., 23andMe + AncestryDNA) in
     one batch usually fails — submit per-vendor batches instead.
@@ -38,6 +40,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+from itertools import chain
 from pathlib import Path
 
 from genepred.io import bgzf_compress, load_genotype_by_chrom, parse_chroms
@@ -49,6 +52,10 @@ SERVERS = {
         "app": "imputationserver2",
         "default_panel": "apps@hrc-r1.1",
         "default_population": "off",
+        # Server-enforced minimum is 5, but we pad beyond it: each extra
+        # diverse 1KG column leaves fewer sites looking monomorphic
+        # (~15% of a chip would still drop with 4 pads, ~4% with 9).
+        "min_samples": 10,
         "token_env": "MICHIGAN_API_TOKEN",
         "token_file": ".michigan_token",
         "signup": "https://imputationserver.sph.umich.edu",
@@ -60,6 +67,7 @@ SERVERS = {
         "app": "imputationserver2",
         "default_panel": "apps@topmed-r3",
         "default_population": "all",
+        "min_samples": 20,
         "token_env": "TOPMED_API_TOKEN",
         "token_file": ".topmed_token",
         "signup": "https://imputation.biodatacatalyst.nhlbi.nih.gov",
@@ -89,25 +97,71 @@ def set_server(name: str) -> None:
 # ----------------------------------------------------------------- VCF prep
 
 
-def _merge_chrom(chrom, per_sample, kg_vcf, out_path, sample_names, holdout_frac, rng):
+def _select_pad_columns(header_cols: list[str], n_pad: int):
+    """Pick n_pad sample columns from the panel's #CHROM header, evenly
+    strided across the cohort (1KG orders samples by population, so a
+    stride spans populations). Returns (column offsets, sample names)."""
+    samples = header_cols[9:]
+    if not samples or n_pad <= 0:
+        return [], []
+    n = min(n_pad, len(samples))
+    if n == 1:
+        idx = [0]
+    else:
+        idx = sorted({round(i * (len(samples) - 1) / (n - 1)) for i in range(n)})
+    return idx, [samples[i] for i in idx]
+
+
+def _biallelic_gt(field: str, alt_code: str) -> str:
+    """Recode a panel genotype field against the single kept ALT:
+    panel allele `alt_code` -> 1, ref -> 0, any other alt -> missing."""
+    alleles = field.split(":", 1)[0].replace("|", "/").split("/")
+    if len(alleles) == 1:
+        alleles = alleles * 2
+    if len(alleles) != 2 or any(x not in ("0", alt_code) for x in alleles):
+        return "./."
+    return "/".join("1" if x == alt_code else "0" for x in alleles)
+
+
+def _merge_chrom(
+    chrom, per_sample, kg_vcf, out_path, sample_names, holdout_frac, rng, n_pad=0
+):
     """Multi-sample VCF for one chromosome at the intersection of
-    per-sample sites, conformed to 1KG REF/ALT. Optional random holdout
-    for imputation-accuracy checking."""
+    per-sample sites, conformed to 1KG REF/ALT. Pads with real 1KG
+    sample columns so sites carry variation (the servers drop
+    monomorphic sites); falls back to duplicating user columns when the
+    panel VCF has no genotype columns. Optional random holdout for
+    imputation-accuracy checking. Returns (n_sites, held, all_names)."""
     common = set.intersection(*(set(s.get(chrom, {})) for s in per_sample))
     held = {}
     n_ok = 0
+    n_user = len(per_sample)
     with gzip.open(kg_vcf, "rt") as ref, open(out_path, "w") as out:
+        pad_idx, pad_names = [], []
+        first_data = None
+        for line in ref:
+            if line.startswith("#CHROM"):
+                pad_idx, pad_names = _select_pad_columns(
+                    line.rstrip("\n").split("\t"), n_pad
+                )
+            elif not line.startswith("#"):
+                first_data = line
+                break
+        n_dup = n_pad - len(pad_idx)
+        dup_names = [
+            f"{sample_names[i % n_user]}_dup{n_user + len(pad_idx) + i + 1}"
+            for i in range(n_dup)
+        ]
+        all_names = list(sample_names) + pad_names + dup_names
         out.write("##fileformat=VCFv4.2\n")
         out.write("##source=genepred.impute.michigan (REF/ALT from 1KG Phase3)\n")
         out.write('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n')
         out.write(
             "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t"
-            + "\t".join(sample_names)
+            + "\t".join(all_names)
             + "\n"
         )
-        for line in ref:
-            if line.startswith("#"):
-                continue
+        for line in chain([first_data] if first_data else [], ref):
             t1 = line.find("\t")
             t2 = line.find("\t", t1 + 1)
             try:
@@ -136,6 +190,11 @@ def _merge_chrom(chrom, per_sample, kg_vcf, out_path, sample_names, holdout_frac
             for s in per_sample:
                 _, a1, a2 = s[chrom][pos]
                 gts.append(f"{int(a1 == a)}/{int(a2 == a)}")
+            if pad_idx:
+                cols = line.rstrip("\n").split("\t")
+                alt_code = str(alt_string.split(",").index(a) + 1)
+                gts.extend(_biallelic_gt(cols[9 + i], alt_code) for i in pad_idx)
+            gts.extend(gts[i % n_user] for i in range(n_dup))
             if holdout_frac > 0 and rng.random() < holdout_frac:
                 held[pos] = (r, a, list(gts))
                 gts = ["./."] * len(gts)
@@ -146,7 +205,7 @@ def _merge_chrom(chrom, per_sample, kg_vcf, out_path, sample_names, holdout_frac
             )
             n_ok += 1
             common.remove(pos)
-    return n_ok, held
+    return n_ok, held, all_names
 
 
 def _bgzip_tabix(path: Path) -> Path:
@@ -186,37 +245,36 @@ def _require_ref_panels(chrom_list: list[str]) -> None:
         f"Searched: {kg}/\n\n{hint}"
     )
 
+
 def prepare(
-    genotype_files: list, out_dir: Path, chroms: str = "1-22", holdout_frac: float = 0.0
+    genotype_files: list,
+    out_dir: Path,
+    chroms: str = "1-22",
+    holdout_frac: float = 0.0,
+    min_samples: int = 5,
 ) -> list[Path]:
     """Conform genotype files to multi-sample bgzipped VCFs ready for
-    upload. Pads to ≥5 samples (Michigan's minimum) by duplicating columns."""
+    upload. Pads to the server's target sample count (10 Michigan, 20
+    TOPMed) with real 1KG sample columns — copies of the user's genome
+    would make most sites monomorphic, and the servers drop those."""
     out_dir.mkdir(parents=True, exist_ok=True)
     paths = [Path(f) for f in genotype_files]
     sample_names = [p.stem.split(".")[0] for p in paths]
     print(f"[michigan] loading {len(paths)} genotype file(s)...", file=sys.stderr)
     per_sample = [load_genotype_by_chrom(f) for f in paths]
-
-    if len(per_sample) < 5:
-        i = 0
-        while len(per_sample) < 5:
-            per_sample.append(per_sample[i % len(paths)])
-            sample_names.append(f"{sample_names[i % len(paths)]}_dup{len(per_sample)}")
-            i += 1
+    n_pad = max(0, min_samples - len(per_sample))
 
     rng = random.Random(0)
     held_all = {}
     out_files = []
+    all_names = sample_names
     chrom_list = parse_chroms(chroms)
     _require_ref_panels(chrom_list)
     for chrom in chrom_list:
         kg = next(kg_dir().glob(f"ALL.chr{chrom}.*.vcf.gz"), None)
-        if kg is None:
-            print(f"  chr{chrom:>2}: no 1KG panel, skip", file=sys.stderr)
-            continue
         out_path = out_dir / f"chr{chrom}.vcf"
-        n, held = _merge_chrom(
-            chrom, per_sample, kg, out_path, sample_names, holdout_frac, rng
+        n, held, all_names = _merge_chrom(
+            chrom, per_sample, kg, out_path, sample_names, holdout_frac, rng, n_pad
         )
         held_all.update({(chrom, p): v for p, v in held.items()})
         gz = _bgzip_tabix(out_path)
@@ -225,7 +283,7 @@ def prepare(
 
     if held_all:
         with open(out_dir / "holdout_truth.tsv", "w") as f:
-            f.write("chrom\tpos\tref\talt\t" + "\t".join(sample_names) + "\n")
+            f.write("chrom\tpos\tref\talt\t" + "\t".join(all_names) + "\n")
             for (c, p), (r, a, gts) in sorted(held_all.items()):
                 f.write(f"{c}\t{p}\t{r}\t{a}\t" + "\t".join(gts) + "\n")
     return out_files
@@ -319,7 +377,7 @@ def submit(
     *,
     server: str | None = None,
     refpanel: str | None = None,
-    population: str = None,
+    population: str | None = None,
     job_name: str | None = None,
     holdout_frac: float = 0.0,
     token: str | None = None,
@@ -340,7 +398,12 @@ def submit(
 
     out_dir = Path(out_dir)
     tok = _token(token)
-    files = prepare(genotype_files, out_dir, holdout_frac=holdout_frac)
+    files = prepare(
+        genotype_files,
+        out_dir,
+        holdout_frac=holdout_frac,
+        min_samples=SERVERS[_SERVER]["min_samples"],
+    )
     print(
         f"[{_SERVER}] uploading {len(files)} files to {API} (panel={refpanel}) …",
         file=sys.stderr,
